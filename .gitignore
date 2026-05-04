@@ -1,4 +1,6 @@
-data/
+data/*
+!data/test_data.csv
+
 .ai/
 mlruns/
 mlruns.db

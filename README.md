@@ -1,6 +1,6 @@
-# template
+# Anomaly Detection
 
-Template repository for python projects
+TODO
 
 ## Quick Start
 

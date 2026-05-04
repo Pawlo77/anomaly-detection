@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_package_imports() -> None:
     """Smoke test: package can be imported."""
-    import template  # noqa: F401
+    import anomaly_detection  # noqa: F401
 
 
 def test_project_scaffold_layout() -> None:
@@ -11,7 +11,7 @@ def test_project_scaffold_layout() -> None:
     root = Path(__file__).resolve().parents[1]
 
     expected_paths = [
-        root / "src" / "template",
+        root / "src" / "anomaly_detection",
         root / "tests",
         root / "notebooks",
         root / "report",

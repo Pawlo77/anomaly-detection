@@ -1,4 +1,4 @@
-"""Public API for anomaly model wrappers."""
+"""Composable anomaly detector wrappers, parameter models, and protocol types."""
 
 from .detectors import (
     DBSCANModel,

@@ -12,6 +12,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor, NearestNeighbors
 from sklearn.svm import OneClassSVM
 
+from .dbscan_eps import compute_dbscan_eps_knee
 from .params import (
     DBSCANParams,
     ECODParams,
@@ -26,7 +27,14 @@ type FloatArray = npt.NDArray[np.float64]
 
 
 def _to_float_array(x: npt.ArrayLike) -> FloatArray:
-    """Cast array-like input to contiguous float64 matrix."""
+    """Cast array-like input to contiguous ``float64`` matrices.
+
+    Args:
+        x: Feature matrix destined for sklearn/pyod backends.
+
+    Returns:
+        C-order ``float64`` ndarray without copying when already compatible.
+    """
     return np.ascontiguousarray(np.asarray(x, dtype=np.float64))
 
 
@@ -171,26 +179,43 @@ class DBSCANModel:
     params: DBSCANParams = field(default_factory=DBSCANParams)
     _estimator: DBSCAN = field(init=False)
     _core_neighbors: NearestNeighbors | None = field(init=False, default=None)
+    _effective_eps: float = field(init=False, default=1.0)
     _train_x: FloatArray | None = field(init=False, default=None)
     _train_scores: FloatArray | None = field(init=False, default=None)
     protocol: ModelProtocol = field(init=False)
 
     def __post_init__(self) -> None:
-        self._estimator = DBSCAN(**self.params.model_dump())
         self.protocol = ModelProtocol("DBSCAN", self._fit_impl, self._score_impl)
 
     def _fit_impl(self, x: FloatArray) -> None:
+        if self.params.eps_mode == "knee":
+            knee = compute_dbscan_eps_knee(
+                x, min_samples=self.params.min_samples, metric=self.params.metric
+            )
+            eps_eff = knee * float(self.params.eps_knee_multiplier)
+        else:
+            eps_eff = float(self.params.eps)
+        self._effective_eps = eps_eff
+        self._estimator = DBSCAN(
+            eps=self._effective_eps,
+            min_samples=int(self.params.min_samples),
+            metric=self.params.metric,
+            algorithm=self.params.algorithm,
+            n_jobs=self.params.n_jobs,
+        )
         self._estimator.fit(x)
         self._train_x = x.copy()
         if self._estimator.core_sample_indices_.size == 0:
             self._core_neighbors = None
         else:
             core_samples = x[self._estimator.core_sample_indices_]
-            self._core_neighbors = NearestNeighbors(n_neighbors=1, metric=self.params.metric)
+            self._core_neighbors = NearestNeighbors(
+                n_neighbors=1, metric=self.params.metric, n_jobs=-1
+            )
             self._core_neighbors.fit(core_samples)
         labels = self._estimator.labels_
         distances = self._distance_to_core(x)
-        base = distances / self.params.eps
+        base = distances / self._effective_eps
         scores = base.copy()
         scores[labels == -1] = 1.0 + base[labels == -1]
         scores[labels != -1] = np.minimum(scores[labels != -1], 1.0)
@@ -198,7 +223,7 @@ class DBSCANModel:
 
     def _distance_to_core(self, x: FloatArray) -> FloatArray:
         if self._core_neighbors is None:
-            return np.full(shape=(x.shape[0],), fill_value=self.params.eps * 2.0)
+            return np.full(shape=(x.shape[0],), fill_value=self._effective_eps * 2.0)
         distances, _ = self._core_neighbors.kneighbors(x, return_distance=True)
         return distances[:, 0]
 

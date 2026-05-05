@@ -1,10 +1,12 @@
 """Parameter models for anomaly detector wrappers."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseParams(BaseModel):
-    """Shared pydantic config for detector parameters."""
+    """Shared pydantic guarantees (forbid unknown fields, immutable instances)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -51,6 +53,7 @@ class IForestParams(BaseParams):
     max_features: float = Field(default=1.0, gt=0.0, le=1.0)
     bootstrap: bool = False
     random_state: int = 42
+    n_jobs: int = -1
 
 
 class LOFParams(BaseParams):
@@ -79,14 +82,16 @@ class LOFParams(BaseParams):
     p: int = Field(default=2, ge=1)
     contamination: float = Field(default=0.1, gt=0.0, le=0.5)
     novelty: bool = False
+    n_jobs: int = -1
 
 
 class DBSCANParams(BaseParams):
     """Validated parameters for DBSCAN wrapper.
 
     Attributes:
-        eps: The maximum distance between two samples for one to be considered
-            as in the neighborhood of the other.
+        eps: Neighborhood radius used when eps_mode=fixed or as fallback when knee fails.
+        eps_mode: When ``knee``, fit uses sorted k-distance knee per plan §2.4.
+        eps_knee_multiplier: Plan §2.4 multipliers swept around eps_knee; Track A uses 1.0.
         min_samples: The number of samples (or total weight) in a neighborhood for a point
             to be considered as a core point. This includes the point itself.
         metric: The metric to use when calculating distance between instances in a feature array.
@@ -95,9 +100,12 @@ class DBSCANParams(BaseParams):
     """
 
     eps: float = Field(default=0.5, gt=0.0)
+    eps_mode: Literal["fixed", "knee"] = "knee"
+    eps_knee_multiplier: float = Field(default=1.0, gt=0.0, le=10.0)
     min_samples: int = Field(default=5, ge=1)
     metric: str = "euclidean"
     algorithm: str = "auto"
+    n_jobs: int = -1
 
 
 class ECODParams(BaseParams):

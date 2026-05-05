@@ -20,7 +20,7 @@ class ThresholdConfig(BaseModel):
         contamination: Fraction of samples to mark as outliers.
     """
 
-    contamination: float = Field(default=0.1, gt=0.0, le=0.5)
+    contamination: float = Field(default=0.1, gt=0.0, le=1.0)
 
 
 @dataclass(slots=True)
@@ -75,6 +75,9 @@ class ModelProtocol:
 
         Returns:
             Array of labels, where `1` means outlier and `0` means inlier.
+
+        Raises:
+            RuntimeError: If ``fit`` was never called successfully.
         """
         cfg = ThresholdConfig(contamination=contamination)
         scores = self.score_samples(x)

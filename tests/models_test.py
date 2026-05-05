@@ -1,7 +1,5 @@
 """Tests for anomaly model wrappers and protocol behavior."""
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 
@@ -13,6 +11,8 @@ from anomaly_detection.models import (
     LOFModel,
     OCSVMModel,
 )
+from anomaly_detection.models.dbscan_eps import compute_dbscan_eps_knee
+from anomaly_detection.models.params import DBSCANParams
 from anomaly_detection.models.protocol import ModelProtocol
 
 
@@ -63,6 +63,21 @@ def test_model_protocol_fit_score_predict_contract(model: object) -> None:
     assert labels.shape == (x.shape[0],)
     assert set(np.unique(labels)).issubset({0, 1})
     assert labels.sum() >= 1
+
+
+def test_compute_dbscan_eps_knee_is_positive_finite() -> None:
+    """Knee helper always returns usable neighborhood radii."""
+    x = _toy_data()
+    eps = compute_dbscan_eps_knee(x, min_samples=5, metric="euclidean")
+    assert eps > 0.0
+
+
+def test_dbscan_fixed_eps_avoids_auto_knee() -> None:
+    """Explicit fixed mode binds sklearn ``eps`` to the configured literal."""
+    x = _toy_data()
+    model = DBSCANModel(params=DBSCANParams(eps=0.4, eps_mode="fixed"))
+    model.fit(x)
+    assert model._estimator.eps == pytest.approx(0.4)
 
 
 def test_protocol_raises_when_scoring_before_fit() -> None:

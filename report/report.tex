@@ -5,6 +5,9 @@
 \usepackage{graphicx}
 \usepackage{tabularx}
 \usepackage{array}
+\usepackage{multirow}
+\usepackage{booktabs}
+\usepackage{longtable}
 
 \title{TITLE}
 
@@ -25,5 +28,308 @@
 \begin{abstract}
 ABSTRACT
 \end{abstract}
+
+\section{Models}
+
+The detector suite is chosen to probe distinct failure modes rather than to maximize benchmark score alone. It targets contamination-prior sensitivity, dimensionality stress and distance concentration, local versus global anomaly structure, and dependence on marginal-independence assumptions. The resulting mix covers boundary learning, random isolation, local density ratio estimation, density-connectivity clustering, and marginal distribution scoring, which makes it possible to attribute performance changes to the underlying mechanism of each detector under a shared preprocessing and evaluation protocol.
+
+\begin{description}
+    \item[OCSVM] OCSVM is the boundary-based baseline. In its RBF (Radial Basis Function) form, it implicitly maps the normal training data into a high-dimensional space and attempts to draw a tight, flexible "envelope" or boundary around it, separating the normal data from the origin. The hyperparameter \texttt{nu} controls the strictness of this envelope by dictating the maximum allowed fraction of training points that can fall outside of it (acting as errors or anomalies). Intuitively, if a new point falls outside this learned boundary, it is flagged as an anomaly \cite{scholkopf2001support}.
+
+    \item[IForest] IForest represents partition-based detection. It works on the premise that anomalies are "few and different." The algorithm builds a forest of random decision trees by randomly selecting a feature and a random split value between the maximum and minimum values of that feature. Because anomalies are sparse and far from normal data clusters, it takes very few random splits to isolate an anomaly into its own leaf node. Conversely, normal points are densely packed and require many more splits to be isolated. The shorter the average path length from the root to the leaf, the more anomalous the point \cite{liu2008isolation}.
+
+    \item[LOF] LOF captures local anomaly structure by comparing a point's local density with that of its neighbors. Unlike global methods that look at the entire dataset at once, LOF recognizes that datasets often have clusters of varying densities. It calculates the density around a specific point and compares it to the average density of its $k$-nearest neighbors. If a point has a significantly lower density than its neighbors, it means it is relatively isolated \emph{for its specific neighborhood}, even if it isn't the furthest point globally. This makes LOF highly sensitive to subtle, local deviations \cite{breunig2000lof}.
+
+    \item[DBSCAN] DBSCAN uses density connectivity to separate clusters from noise. It groups together points that are closely packed together (i.e., having a minimum number of neighbors within a specific radius, $\epsilon$). Points that sit in low-density regions and cannot be reached from any dense cluster are simply left out in the cold. Instead of assigning an anomaly score on a sliding scale, DBSCAN provides a stark binary contrast: a point is either part of a dense, connected component (normal) or it is labeled as unclustered "noise" (an outlier) \cite{ester1996dbscan}.
+
+    \item[ECOD] ECOD is the marginal-distribution baseline. It looks at the dataset one feature at a time, calculating the Empirical Cumulative Distribution Function (CDF) for each. Intuitively, it asks: "What is the probability of seeing a value this extreme, or more extreme, in this specific feature?" It then aggregates these probabilities (the "tail evidence") across all dimensions for a given point. Because it looks at features independently and relies on empirical probabilities rather than assuming the data fits a specific shape (like a bell curve), it serves as a highly efficient, parameter-light reference model \cite{li2022ecod}.
+
+    \item[HBOS] HBOS also relies on marginal (feature-wise) evidence, but instead of using the continuous CDF like ECOD, it builds discrete histograms for each feature. To score a point, HBOS checks which histogram bin the point's value falls into for every feature. If a point frequently falls into very short bins (meaning very few other data points share that value), it accumulates a high anomaly score. Because it relies on histograms, it is exceptionally fast, but its accuracy is highly sensitive to how you define the bins (e.g., bin width and the number of bins) \cite{goldstein2012hbos}.
+\end{description}
+
+Table~\ref{tab:model-grids} summarizes the tuning setup for each model in factorized form. The final column reports total runs per dataset.
+
+\begin{table*}[h]
+\centering
+\small
+\caption{Hyperparameter design by model. Total runs are reported per dataset.}
+\label{tab:model-grids}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{1.4cm} >{\raggedright\arraybackslash}p{2.5cm} >{\raggedright\arraybackslash}p{2.8cm} >{\raggedright\arraybackslash}X >{\centering\arraybackslash}p{1.6cm}}
+\toprule
+\textbf{Model} & \textbf{Parameter} & \textbf{Values} & \textbf{Motivation} & \textbf{Total runs per dataset} \\
+\midrule
+\multirow{5}{*}{OCSVM}
+& \texttt{kernel}
+& \{rbf, poly, sigmoid, linear\}
+& Compare boundary families (local, polynomial, linear-like) under same protocol.
+& \multirow{5}{*}{\shortstack{42 primary;\\80 sampled}} \\
+& \texttt{nu}
+& \{0.01, 0.05, 0.10, 0.20, 0.35, 0.50\}
+& Control allowed outlier fraction and margin errors; test prior misspecification.
+& \\
+& \texttt{gamma}
+& \{scale, auto, 0.001, 0.01, 0.1, 1.0, 10.0\}
+& Test under/over-localized RBF behavior and high-dimensional kernel collapse risk.
+& \\
+& \texttt{degree}
+& \{2, 3, 4\}
+& Control polynomial boundary complexity.
+& \\
+& \texttt{coef0}
+& \{0.0, 1.0\}
+& Shift polynomial/sigmoid kernel response.
+& \\
+\midrule
+\multirow{6}{*}{IForest}
+& \texttt{n\_estimators}
+& \{50, 100, 200, 500\}
+& Check ensemble convergence and variance reduction.
+& \multirow{6}{*}{864} \\
+& \texttt{max\_samples}
+& \{auto, 32, 64, 128, 256, 512\}
+& Probe subsample-size effect on isolation depth and scalability.
+& \\
+& \texttt{contamination}
+& \{0.01, 0.05, 0.10, 0.20, 0.35, 0.50\}
+& Evaluate threshold sensitivity to prior.
+& \\
+& \texttt{max\_features}
+& \{0.5, 0.75, 1.0\}
+& Test feature subsampling under noisy/high-dimensional settings.
+& \\
+& \texttt{bootstrap}
+& \{True, False\}
+& Compare with/without replacement for tree diversity.
+& \\
+& \texttt{random\_state}
+& \{42\}
+& Keep deterministic baseline in grid.
+& \\
+\midrule
+\multirow{5}{*}{LOF}
+& \texttt{n\_neighbors}
+& \{5, 10, 15, 20, 30, 50, 75, 100\}
+& Control locality scale; key factor for local anomaly sensitivity.
+& \multirow{5}{*}{480} \\
+& \texttt{metric}
+& \{euclidean, manhattan, minkowski, cosine\}
+& Evaluate distance geometry assumptions.
+& \\
+& \texttt{p}
+& \{1, 2, 3\}
+& Tune Minkowski family shape.
+& \\
+& \texttt{contamination}
+& \{0.01, 0.05, 0.10, 0.20, 0.35\}
+& Compare threshold behavior across priors.
+& \\
+& \texttt{novelty}
+& \{False\}
+& Keep transductive setting consistent with main protocol.
+& \\
+\midrule
+\multirow{4}{*}{DBSCAN}
+& \texttt{eps}
+& \(\texttt{eps}_{knee}\times\)\{0.5, 0.75, 1.0, 1.25, 1.5, 2.0\}
+& Use dataset-specific scale anchor, then controlled neighborhood expansion/shrinkage.
+& \multirow{4}{*}{72} \\
+& \texttt{min\_samples}
+& \{3, 5, 10, 15, 20, 30\}
+& Vary density strictness for core-point definition.
+& \\
+& \texttt{metric}
+& \{euclidean, manhattan\}
+& Check metric dependence of density-connectivity structure.
+& \\
+& \texttt{algorithm}
+& \{auto\}
+& Use backend chosen by sklearn for efficiency.
+& \\
+\midrule
+\multirow{1}{*}{ECOD}
+& \texttt{contamination}
+& \{0.01, 0.05, 0.10, 0.20, 0.35, 0.50\}
+& ECOD score is parameter-free; contamination affects threshold only.
+& \multirow{1}{*}{6} \\
+\midrule
+\multirow{4}{*}{HBOS}
+& \texttt{n\_bins}
+& \{5, 10, 20, 30, 50, auto\}
+& Control histogram resolution, bias-variance trade-off.
+& \multirow{4}{*}{240} \\
+& \texttt{alpha}
+& \{0.0, 0.1, 0.2, 0.5\}
+& Smooth zero-count bins and stabilize ranking.
+& \\
+& \texttt{tol}
+& \{0.1, 0.5\}
+& Control tolerance for values near/outside learned bins.
+& \\
+& \texttt{contamination}
+& \{0.01, 0.05, 0.10, 0.20, 0.35\}
+& Evaluate threshold sensitivity.
+& \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Datasets}
+
+\subsection{Dataset Sources and Composition}
+
+The benchmark corpus combines tabular anomaly detection datasets from the ODDS library \cite{rayana2016odds} with selected two-dimensional datasets from the Gagolewski clustering suite \cite{gagolewski2022clustering}. All datasets are standardized into a common schema with feature matrix \(X \in \mathbb{R}^{n \times d}\) and binary label vector \(y \in \{0, 1\}^n\), where \(1\) denotes an anomalous observation. The corpus contains 37 datasets, spanning 1{,}086{,}545 total observations, with sizes ranging from \(n=120\) to \(n=567{,}498\), dimensionality from \(d=2\) to \(d=400\), and natural contamination rates from \(0.0\%\) to \(35.9\%\).
+
+The ODDS subset comprises 26 multidimensional tabular datasets, most available via the ADBench mirror \cite{rayana2016odds}. The 2D subset comprises 11 datasets from Gagolewski et al.\ (v1.1.0), selected to expose solver sensitivity to geometric structure (concentric rings, interleaved curves, sparse neighborhoods, and boundary ambiguity).
+
+\subsection{Corpus Design Rationale}
+
+The corpus is intentionally heterogeneous to expose distinct detector failure modes:
+
+\begin{description}
+    \item[High-dimensional stress] \texttt{arrhythmia} (d=274), \texttt{musk} (d=166), \texttt{speech} (d=400), and \texttt{mnist} (d=100) test kernel collapse and distance-metric degradation.
+    \item[Extreme scale] \texttt{cover} (n=286{,}048), \texttt{http} (n=567{,}498), \texttt{smtp} (n=95{,}156), and \texttt{shuttle} (n=49{,}097) test algorithmic scalability and numerical stability.
+    \item[Prior mismatch] \texttt{breastw} (35.0\%), \texttt{ionosphere} (35.9\%), \texttt{pima} (34.9\%), and \texttt{satellite} (31.6\%) test methods sensitive to contamination assumptions when the prior is far from typical (1--5\%).
+    \item[Geometric complexity] Gagolewski 2D datasets expose solver sensitivity to local versus global anomaly structure, symmetry, and boundary ambiguity.
+\end{description}
+
+\subsection{Data Acquisition and Preprocessing}
+
+Dataset acquisition and preprocessing follow a uniform reproducible protocol:
+
+\begin{description}
+    \item[Download and validation] Raw artifacts are downloaded from verified public sources (ADBench mirrors for ODDS; official GitHub release for Gagolewski v1.1.0). Each dataset is validated against expected row count, feature count, and contamination rate.
+    \item[Canonicalization] All datasets are converted to a common tabular format (CSV or NumPy) with explicit binary labels. Missing values are documented and, for \texttt{arrhythmia}, imputed using an iterative procedure (see below).
+    \item[Default preprocessing] All datasets (except those with dedicated pipelines) are preprocessed with robust scaling (median center, IQR normalize) applied only to numeric features. This preserves low-d interpretability while reducing outlier influence on scale estimates.
+    \item[Arrhythmia-specific preprocessing] The \texttt{arrhythmia} dataset contains \(\sim 0.33\%\) missing values and nominal features intermixed with continuous ECG signals. A dedicated preprocessing branch applies: (1) iterative imputation using Bayesian Ridge regression (10 iterations) to preserve feature correlations, (2) one-hot encoding of nominal attributes, and (3) application of 95\%-variance-preserving PCA before fitting LOF and DBSCAN to manage the post-encoding dimensionality expansion. OCSVM, IForest, ECOD, and HBOS are run on both raw and PCA-reduced representations.
+\end{description}
+
+\subsection{Algorithm-Specific Subsampling}
+
+Computational cost varies widely across algorithms. To ensure tractability while maintaining methodological integrity, the following protocol is applied:
+
+\begin{description}
+    \item[No subsampling] IForest, ECOD, and HBOS run on full dataset due to their favorable time complexity ($O(n \log n)$ or $O(nd \log n)$). Running on full data for these methods is itself a contribution, demonstrating industrial-grade scalability.
+    \item[Stratified subsampling] OCSVM, LOF, and DBSCAN (all quadratic or worse) are capped at n=20{,}000 observations when the full dataset exceeds this size. Stratified random sampling preserves the contamination ratio. This cap applies to four datasets: \texttt{cover}, \texttt{http}, \texttt{smtp}, and \texttt{shuttle}.
+\end{description}
+
+Crucially, anomaly labels are reserved for evaluation only and never enter the fitting or hyperparameter-selection pipeline. This ensures a faithful unsupervised protocol.
+
+Detailed corpus-level and per-dataset descriptive statistics are reported in Appendix~A.
+
+\section{Evaluation Methodology}
+
+The evaluation protocol separates pointwise performance reporting from robustness analysis. Metrics summarize classification quality and ranking quality under a fixed contamination threshold, while sensitivity analysis measures how much performance changes under hyperparameter variation and resampling.
+
+\subsection{Metrics}
+
+All metrics are computed at the natural contamination threshold, so each method labels exactly the expected fraction of points as outliers. This keeps threshold selection fixed across datasets and makes the comparison directly about score quality rather than post-processing.
+
+\begin{description}
+    \item[Accuracy] retained as a baseline summary, but interpreted cautiously because it can be dominated by the majority class under extreme imbalance.
+    \item[Precision] measures the fraction of predicted outliers that are truly anomalous, which is useful when false positives are costly.
+    \item[Recall] measures how many true outliers are recovered, which is important when missing anomalies is expensive.
+    \item[ROC-AUC] evaluates ranking quality independently of class prevalence, so it is useful for cross-dataset comparison.
+    \item[PR-AUC] emphasizes performance on the positive class and is therefore more informative than ROC-AUC under heavy imbalance.
+    \item[MCC] summarizes all four confusion-matrix cells in a single balanced score, which makes it robust under skewed labels.
+    \item[F1] combines precision and recall into a single thresholded score at the natural contamination cut.
+\end{description}
+
+\subsection{Sensitivity Analysis}
+
+Sensitivity analysis is split into a primary unsupervised benchmark and a secondary oracle study. The primary track uses domain-standard defaults without ground truth, while the secondary track evaluates the full hyperparameter grids after labels are revealed to measure how much performance is left on the table by the defaults.
+
+\begin{description}
+    \item[Unsupervised execution] provides the primary benchmark because it uses fixed, label-free defaults and reflects the realistic deployment setting.
+    \item[Oracle sensitivity analysis] provides the secondary benchmark because it quantifies the best attainable performance over the full hyperparameter grid.
+    \item[Sobol sensitivity indices] attribute variance in PR-AUC to individual hyperparameters and their interactions, making parameter importance explicit.
+    \item[Bootstrap stability score] measures how much PR-AUC varies across resamples, which identifies configurations that are accurate and stable rather than only accurate.
+    \item[Stability-constrained selection] prefers the best mean PR-AUC among configurations whose bootstrap variability stays below the target threshold.
+\end{description}
+
+\bibliographystyle{plain}
+\bibliography{mybib}
+
+\appendix
+
+\section{Dataset Details}
+
+This section provides corpus-level and per-dataset descriptive statistics used in the experimental design and analysis. All statistics are computed after the canonicalization step and before model-specific preprocessing (e.g., arrhythmia PCA) to reflect the input to the default preprocessing pipeline.
+
+\subsection{Corpus-Level Summary}
+
+Table~\ref{tab:dataset-summary} summarizes key corpus properties. The 37 datasets range from extremely small ($n=120$) to massive ($n=567{,}498$), and from low-d ($d=2$) to ultra-high-d ($d=400$), ensuring comprehensive coverage of failure modes.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Corpus-level dataset summary. Statistics reflect raw datasets after canonicalization, before preprocessing.}
+\label{tab:dataset-summary}
+\begin{tabular}{lr}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Total datasets & 37 \\
+ODDS datasets & 26 \\
+2D benchmark datasets (Gagolewski) & 11 \\
+Total observations & 1{,}086{,}545 \\
+Observation count range & 120 -- 567{,}498 \\
+Dimensionality range & 2 -- 400 \\
+Contamination rate range & 0.0\% -- 35.9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-Dataset Descriptive Statistics}
+
+Table~\ref{tab:dataset-full} provides per-dataset statistics used to characterize solver stress and guide preprocessing decisions. Columns: \texttt{dataset\_id} (name), \texttt{n\_rows}/\texttt{n\_features} (size), \texttt{contam.} (anomaly rate), \texttt{missing} (fraction missing), \texttt{outliers}/\texttt{inliers} (counts), \texttt{mean $|\rho|$} (mean absolute correlation; 0=independent, 1=collinear), \texttt{CR} (distance concentration ratio; $\gg1$=intact geometry, $\lesssim0.1$=curse-of-dimensionality).
+
+\begin{table*}[h]
+\small
+\centering
+\caption{Per-dataset descriptive statistics. All values rounded to four decimals.}\label{tab:dataset-full}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{dataset\_id} & \textbf{n\_rows} & \textbf{n\_features} & \textbf{contam.} & \textbf{missing} & \textbf{outliers} & \textbf{inliers} & \textbf{mean $|\rho|$} & \textbf{CR} \\
+\midrule
+annthyroid & 7200 & 6 & 0.0742 & 0.0000 & 534 & 6666 & 0.2502 & 2.8878 \\
+arrhythmia & 452 & 274 & 0.1460 & 0.0033 & 66 & 386 & 0.0891 & 2.4469 \\
+breastw & 683 & 9 & 0.3499 & 0.0000 & 239 & 444 & 0.6019 & 2.1979 \\
+cardio & 1831 & 21 & 0.0961 & 0.0000 & 176 & 1655 & 0.2206 & 2.7287 \\
+cover & 286048 & 10 & 0.0096 & 0.0000 & 2747 & 283301 & 0.1932 & 2.2343 \\
+glass & 214 & 7 & 0.0421 & 0.0000 & 9 & 205 & 0.2825 & 2.7008 \\
+http & 567498 & 3 & 0.0039 & 0.0000 & 2211 & 565287 & 0.0558 & 3.8608 \\
+ionosphere & 351 & 32 & 0.3590 & 0.0000 & 126 & 225 & 0.2383 & 1.9882 \\
+letter & 1600 & 32 & 0.0625 & 0.0000 & 100 & 1500 & 0.2017 & 1.5833 \\
+lympho & 148 & 18 & 0.0405 & 0.0000 & 6 & 142 & 0.1681 & 2.4478 \\
+mammography & 11183 & 6 & 0.0232 & 0.0000 & 260 & 10923 & 0.2440 & 3.4668 \\
+mnist & 7603 & 100 & 0.0921 & 0.0000 & 700 & 6903 & 0.0761 & 0.9994 \\
+musk & 3062 & 166 & 0.0317 & 0.0000 & 97 & 2965 & 0.2931 & 1.4152 \\
+optdigits & 5216 & 64 & 0.0288 & 0.0000 & 150 & 5066 & 0.1210 & 1.1473 \\
+pendigits & 6870 & 16 & 0.0227 & 0.0000 & 156 & 6714 & 0.2629 & 1.4304 \\
+pima & 768 & 8 & 0.3490 & 0.0000 & 268 & 500 & 0.1717 & 6.0282 \\
+satellite & 6435 & 36 & 0.3164 & 0.0000 & 2036 & 4399 & 0.4958 & 2.8638 \\
+satimage-2 & 5803 & 36 & 0.0122 & 0.0000 & 71 & 5732 & 0.6374 & 2.9748 \\
+shuttle & 49097 & 9 & 0.0715 & 0.0000 & 3511 & 45586 & 0.1787 & 49.7289 \\
+smtp & 95156 & 3 & 0.0003 & 0.0000 & 30 & 95126 & 0.2650 & 3.2405 \\
+speech & 3686 & 400 & 0.0165 & 0.0000 & 61 & 3625 & 0.0270 & 0.5595 \\
+thyroid & 3772 & 6 & 0.0247 & 0.0000 & 93 & 3679 & 0.2624 & 2.9683 \\
+vertebral & 240 & 6 & 0.1250 & 0.0000 & 30 & 210 & 0.3866 & 6.8239 \\
+vowels & 1456 & 12 & 0.0343 & 0.0000 & 50 & 1406 & 0.2742 & 1.7594 \\
+wbc & 223 & 9 & 0.0448 & 0.0000 & 10 & 213 & 0.4194 & 3.8742 \\
+wine & 129 & 13 & 0.0775 & 0.0000 & 10 & 119 & 0.2649 & 4.3888 \\
+wut/smile & 1000 & 2 & 0.0000 & 0.0000 & 0 & 1000 & 0.0062 & 2.5447 \\
+wut/circles & 4000 & 2 & 0.0000 & 0.0000 & 0 & 4000 & 0.0061 & 2.0512 \\
+wut/isolation & 9000 & 2 & 0.0000 & 0.0000 & 0 & 9000 & 0.0073 & 1.9875 \\
+wut/windows & 2977 & 2 & 0.0000 & 0.0000 & 0 & 2977 & 0.0273 & 2.3659 \\
+wut/x2 & 120 & 2 & 0.0833 & 0.0000 & 10 & 110 & 0.5040 & 2.8022 \\
+sipu/compound & 399 & 2 & 0.0000 & 0.0000 & 0 & 399 & 0.3183 & 2.3353 \\
+sipu/jain & 373 & 2 & 0.0000 & 0.0000 & 0 & 373 & 0.4418 & 2.6253 \\
+sipu/flame & 240 & 2 & 0.0500 & 0.0000 & 12 & 228 & 0.0159 & 2.2884 \\
+sipu/spiral & 312 & 2 & 0.0000 & 0.0000 & 0 & 312 & 0.0012 & 2.3093 \\
+fcps/lsun & 400 & 2 & 0.0000 & 0.0000 & 0 & 400 & 0.0984 & 2.5462 \\
+graves/fuzzyx & 1000 & 2 & 0.0000 & 0.0000 & 0 & 1000 & 0.0072 & 2.8092 \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
 \end{document}

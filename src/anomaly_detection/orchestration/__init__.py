@@ -1,52 +1,25 @@
-"""Orchestration utilities for resumable pipeline execution."""
+"""High-level orchestration API for deterministic, resumable ML experiments.
 
-from .phase_four import PhaseFourSweepRunner, PhaseFourTrialSpec, build_phase_four_command
-from .phase_one import PhaseOneSweepRunner, PhaseOneTrialSpec, build_phase_one_command
-from .phase_three import PhaseThreeSweepRunner, PhaseThreeTrialSpec, build_phase_three_command
-from .phase_two import PhaseTwoSweepRunner, PhaseTwoTrialSpec, build_phase_two_command
-from .runner import PipelineRunner
-from .services import (
-    ISOLATED_CHILD_ENV,
-    PhaseFourService,
-    PhaseOneService,
-    PhaseThreeService,
-    PhaseTwoService,
-    PipelineContext,
-    build_isolated_subprocess_command,
-    build_isolated_subprocess_env,
-    run_isolated_subprocess,
-)
-from .state import PHASE_ORDER, PhaseArtifact, PipelineState, PipelineStateStore
-from .tracking import MlflowRunTracker, ReproducibilityReport, build_mlflow_tracker
+Expose manifest generation, reconciliation, scheduling, reproducibility payloads,
+and MLflow tracker helpers consumed by CLI entrypoints.
+"""
+
+from ..config import MlflowSettings, OrchestrationSettings
+from .manifest import ExperimentManifest, build_manifest
+from .reconcile import ReconcileResult, reconcile_manifest
+from .reproducibility import ReproducibilityReport
+from .scheduler import SchedulerSummary, execute_tasks
+from .tracking import MlflowRunTracker
 
 __all__ = [
-    "ISOLATED_CHILD_ENV",
-    "PHASE_ORDER",
+    "ExperimentManifest",
     "MlflowRunTracker",
-    "PhaseArtifact",
-    "PhaseFourService",
-    "PhaseFourSweepRunner",
-    "PhaseFourTrialSpec",
-    "PhaseOneService",
-    "PhaseOneSweepRunner",
-    "PhaseOneTrialSpec",
-    "PhaseThreeService",
-    "PhaseThreeSweepRunner",
-    "PhaseThreeTrialSpec",
-    "PhaseTwoService",
-    "PhaseTwoSweepRunner",
-    "PhaseTwoTrialSpec",
-    "PipelineContext",
-    "PipelineRunner",
-    "PipelineState",
-    "PipelineStateStore",
+    "MlflowSettings",
+    "OrchestrationSettings",
+    "ReconcileResult",
     "ReproducibilityReport",
-    "build_isolated_subprocess_command",
-    "build_isolated_subprocess_env",
-    "build_mlflow_tracker",
-    "build_phase_four_command",
-    "build_phase_one_command",
-    "build_phase_three_command",
-    "build_phase_two_command",
-    "run_isolated_subprocess",
+    "SchedulerSummary",
+    "build_manifest",
+    "execute_tasks",
+    "reconcile_manifest",
 ]

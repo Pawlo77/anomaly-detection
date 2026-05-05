@@ -1,4 +1,4 @@
-"""Local MLflow tracking helpers for resumable runs."""
+"""Local MLflow session helpers bridging experiment configs into active runs."""
 
 import importlib
 import json
@@ -9,15 +9,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..config import ExperimentConfig, MLflowTrackingConfig
-from .reproductivity import collect_reproducibility_report
+from ..config import ExperimentConfig, MlflowSettings
+from .reproducibility import collect_reproducibility_report
 
 _TRACKING_LOGGER = logging.getLogger(__name__)
 _ACTIVE_MLFLOW_RUN_ID_ENV = "MLFLOW_ACTIVE_RUN_ID"
 
 
 def _resolve_tracking_uri(tracking_uri: str) -> str:
-    """Resolve local tracking URIs to an absolute path when needed."""
+    """Normalize user-provided URIs suitable for MLflow initialization.
+
+    Args:
+        tracking_uri: Raw pydantic-loaded backend descriptor.
+
+    Returns:
+        Fully qualified URI string (SQLite, remote HTTP, absolute file paths).
+    """
     if tracking_uri.startswith("sqlite:"):
         sqlite_target = tracking_uri.removeprefix("sqlite:")
         if sqlite_target.lstrip("/") == ":memory:":
@@ -49,9 +56,16 @@ def _resolve_tracking_uri(tracking_uri: str) -> str:
 
 @dataclass(slots=True)
 class MlflowRunTracker:
-    """Track a single run with MLflow while tolerating offline/local-only setups."""
+    """Track a single run with MLflow while tolerating offline/local-only setups.
 
-    tracking: MLflowTrackingConfig
+    Attributes:
+        tracking: Persisted pydantic tuning controlling experiment names/URIs.
+        experiment_config: High-level reproducibility knobs outside MLflow-specific flags.
+        model_adapter: Opaque estimator handle not touched by orchestration internals.
+        run_name: Desired friendly display name surfaced to dashboards.
+    """
+
+    tracking: MlflowSettings
     experiment_config: ExperimentConfig
     model_adapter: Any
     run_name: str
@@ -60,7 +74,11 @@ class MlflowRunTracker:
     _run_active: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
-        """Start a run and log static hyperparameters and efficiency metrics."""
+        """Start a run when tracking is enabled or no-op cleanly when offline.
+
+        Populates reproducibility payloads, honors resume tokens via environment
+        variables, and survives missing optional backends by logging warnings.
+        """
         if not self.tracking.enabled:
             return
 
@@ -118,7 +136,7 @@ class MlflowRunTracker:
             )
 
     def close(self) -> None:
-        """End the active MLflow run if one was started."""
+        """Finalize active sessions and detach resume environment markers."""
         if self._run_active and self._mlflow is not None:
             self._mlflow.end_run()
             self._run_active = False

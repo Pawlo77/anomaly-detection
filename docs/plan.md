@@ -19,7 +19,7 @@ All experiments are seeded at `random_state=42`, with five additional seed repea
 
 ### 1.1 ODDS Multidimensional Point Datasets
 
-I'll use the full ODDS corpus of 27 multidimensional point datasets (Rayana, 2016). The table below summarizes each dataset's properties and the analytical role it plays in my experiments.
+I'll use the ODDS-aligned ADBench Classical mirror of **26** multidimensional point datasets (subset of Rayana, 2016). The table below summarizes each dataset's properties and the analytical role it plays in my experiments; physical dimensions mirror the shipped npz files (some differ slightly from textbook ODDS excerpts).
 
 | Dataset | n | d | Contamination (%) | Notes |
 |---|---|---|---|---|
@@ -28,7 +28,7 @@ I'll use the full ODDS corpus of 27 multidimensional point datasets (Rayana, 201
 | `breastw` | 683 | 9 | 35.0 | Extreme contamination — stresses prior-dependent methods |
 | `cardio` | 1,831 | 21 | 9.6 | Medium-d, clean structure |
 | `cover` | 286,048 | 10 | 0.96 | Extreme n; algorithm-specific subsampling applies (§1.4) |
-| `glass` | 214 | 9 | 4.2 | Small n, low contamination; expect high bootstrap variance |
+| `glass` | 214 | 7 | 4.2 | Small n, low contamination; expect high bootstrap variance |
 | `http` | 567,498 | 3 | 0.39 | Extreme n, near-zero contamination; subsampling applies |
 | `ionosphere` | 351 | 33 | 35.9 | High-d, extreme contamination |
 | `letter` | 1,600 | 32 | 6.25 | Medium-d, balanced |
@@ -47,7 +47,7 @@ I'll use the full ODDS corpus of 27 multidimensional point datasets (Rayana, 201
 | `thyroid` | 3,772 | 6 | 2.5 | Low-d, clean reference |
 | `vertebral` | 240 | 6 | 12.5 | Small n, low-d |
 | `vowels` | 1,456 | 12 | 3.4 | Low contamination, structured |
-| `wbc` | 378 | 30 | 5.6 | Medium-d, medical |
+| `wbc` | 223 | 9 | 4.48 | ADBench manifest; leukocyte screening |
 | `wine` | 129 | 13 | 7.8 | Smallest n — evaluation metrics unstable, use bootstrap |
 
 **Cross-dataset analytical strata (used in §4):**
@@ -261,7 +261,7 @@ ecod_grid = {
 
 Sweeping `contamination` only shifts the binary threshold, not the underlying score ranking. I'll report rank correlation of binary predictions across contamination values to confirm this, and use ECOD's bootstrap variance as the reference stability floor for all methods.
 
-**Independence assumption test:** For each ODDS dataset, I'll compute mean absolute pairwise Pearson correlation ρ̄ and regress |PR-AUC(ECOD) − PR-AUC(LOF)| against ρ̄ across all 27 datasets. A positive slope is evidence that ECOD's independence assumption causes measurable degradation on correlated data.
+**Independence assumption test:** For each ODDS dataset, I'll compute mean absolute pairwise Pearson correlation ρ̄ and regress |PR-AUC(ECOD) − PR-AUC(LOF)| against ρ̄ across all mirrored ODDS-classical datasets. A positive slope is evidence that ECOD's independence assumption causes measurable degradation on correlated data.
 
 ---
 
@@ -321,9 +321,9 @@ I'll report the following metrics for all datasets. All metrics are computed at 
 
 First-order index Sᵢ = Var(E[Y|θᵢ]) / Var(Y) quantifies the fraction of PR-AUC variance attributable to parameter θᵢ alone. Total-order index Tᵢ captures interactions. For IForest (4 hyperparameters), N=200 gives 1,200 evaluations — tractable. I'll report results as a bar chart showing fraction of PR-AUC variance per hyperparameter.
 
-**Method 2 — Bootstrap Stability Score:**
+**Method 2 — Bootstrap stability pass (Isolation Forest candidate set):**
 
-For each fixed hyperparameter configuration θ, I'll run the algorithm on 10 stratified bootstrap resamples (90% of data) and compute `stability(θ) = std(PR-AUC across resamples)`. The operationally optimal hyperparameter is not necessarily max(PR-AUC) — it's max(PR-AUC) subject to `stability(θ) ≤ 0.03`.
+A full oracle grid yields thousands of θ values; estimating bootstrap variance **for each θ globally** would dominate compute without changing the qualitative story I need (whether defaults sit in a brittle peak). Implementation therefore uses a **finite IForest-only candidate lattice**: several dozen deterministic tuples sampled from `(n_estimators × max_samples × contamination × max_features)`, each scored on **`thyroid`** with **10 stratified bootstrap resamples (90% strata)** — same statistics as originally intended, scoped to tractable cardinality. Define `stability(θ) = std(PR-AUC across resamples)` and impose `σ ≤ 0.03`; the chosen θ maximizes bootstrap mean PR-AUC among surviving candidates (otherwise fallback to unconditional best mean). **Sobol indices** on IForest/OCSVM and **LHS-drawn nu–gamma** probes cover complementary global sensitivity axes without layering bootstrap dispersion on every grid cell — those surfaces are plotted from point estimates unless I explicitly annotate bootstrap bands for the IForest stabilization run.
 
 **Visualization protocol:**
 
@@ -475,7 +475,7 @@ These are the broader questions I'm using this experimental setup to answer:
    From the PCA ablation in §4.1: if IForest's PR-AUC is flat while LOF's degrades monotonically, Liu et al.'s theoretical claim is empirically confirmed on my corpus.
 
 3. **Does ECOD's independence assumption cause measurable degradation on correlated data?**
-   From the regression of |PR-AUC(ECOD) − PR-AUC(LOF)| against mean pairwise ρ̄ across 27 datasets: a positive slope confirms the failure mode.
+   From the regression of |PR-AUC(ECOD) − PR-AUC(LOF)| against mean pairwise ρ̄ across the ODDS mirrored corpus: a positive slope confirms the failure mode.
 
 4. **Are the six algorithms measuring complementary or redundant information?**
    I'll compute Kendall rank correlation τ among anomaly score vectors per dataset. If any pair consistently achieves τ > 0.8, they're providing redundant information and the more expensive one's ensemble weight should be reduced.

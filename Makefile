@@ -7,11 +7,15 @@ export PYTHONPATH=.
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 export OMP_NUM_THREADS=1
 
-.PHONY: help install clean test pre-commit pre-commit-all datasets mlflow mlflow-stop
+.PHONY: help install clean test pre-commit pre-commit-all datasets experiments mlflow mlflow-stop mlflow-audit
 
 MLFLOW_HOST ?= 127.0.0.1
 MLFLOW_PORT ?= 5005
 MLFLOW_WORKERS ?= 1
+EXPERIMENTS_JOBS ?= 4
+EXPERIMENTS_PHASE ?= all
+# Phase: phase4 (primary ladders), oracle (Track B grids + Sobol + bootstrap only),
+#        phase5 (blind), or all.
 
 ############################
 # Repo Maintenance Targets #
@@ -26,8 +30,10 @@ help:
 	@echo "  make pre-commit             - Run pre-commit checks on changed files"
 	@echo "  make pre-commit-all         - Run pre-commit checks on all files"
 	@echo "  make datasets               - Run full datasets pipeline end-to-end"
+	@echo "  make experiments            - Run/resume experiment orchestration"
 	@echo "  make mlflow                 - Launch MLflow UI for local runs"
 	@echo "  make mlflow-stop            - Stop local MLflow UI processes"
+	@echo "  make mlflow-audit           - Verify phase-4 MLflow runs have full metric payloads"
 
 # install dependencies and pre-commit hooks
 install:
@@ -59,9 +65,16 @@ datasets:
 # Orchestration Targets #
 #########################
 
+experiments:
+	uv run python -m anomaly_detection.orchestration.cli --phase "$(EXPERIMENTS_PHASE)" --jobs "$(EXPERIMENTS_JOBS)"
+
 #################
 # Other Targets #
 #################
+
+# Audit SQLite-backed MLflow metrics vs orchestration contract (see orchestration/mlflow_audit.py)
+mlflow-audit:
+	uv run python -m anomaly_detection.orchestration.mlflow_audit
 
 # Launch MLflow UI for local runs
 mlflow:

@@ -1,7 +1,5 @@
 """Suppress sklearn warnings that are expected under benchmark loads but clutter logs."""
 
-
-
 import warnings
 
 

@@ -104,67 +104,69 @@ def execute_tasks(
         heavy_max_concurrent,
     )
 
-    with tqdm(
-        total=total_tasks,
-        desc="Experiments",
-        unit="task",
-        dynamic_ncols=True,
-        miniters=1,
-        mininterval=0.25,
-    ) as pbar:
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
-            while pending or active:
-                while pending and len(active) < jobs and not interrupt.interrupted:
-                    task = pending[0]
-                    is_heavy = task.algorithm in HEAVY_ALGORITHMS
-                    if is_heavy and heavy_running >= heavy_max_concurrent:
-                        break
-                    pending.pop(0)
-                    run_id = _start_task_run(task, mlflow_settings)
-                    future = pool.submit(run_task, task)
-                    active[future] = (task, run_id)
-                    if is_heavy:
-                        heavy_running += 1
+    with (
+        tqdm(
+            total=total_tasks,
+            desc="Experiments",
+            unit="task",
+            dynamic_ncols=True,
+            miniters=1,
+            mininterval=0.25,
+        ) as pbar,
+        ProcessPoolExecutor(max_workers=jobs) as pool,
+    ):
+        while pending or active:
+            while pending and len(active) < jobs and not interrupt.interrupted:
+                task = pending[0]
+                is_heavy = task.algorithm in HEAVY_ALGORITHMS
+                if is_heavy and heavy_running >= heavy_max_concurrent:
+                    break
+                pending.pop(0)
+                run_id = _start_task_run(task, mlflow_settings)
+                future = pool.submit(run_task, task)
+                active[future] = (task, run_id)
+                if is_heavy:
+                    heavy_running += 1
 
-                if not active:
-                    if interrupt.interrupted:
-                        break
-                    sleep(SCHEDULER_IDLE_SLEEP_SECONDS)
-                    continue
+            if not active:
+                if interrupt.interrupted:
+                    break
+                sleep(SCHEDULER_IDLE_SLEEP_SECONDS)
+                continue
 
-                done, _ = wait(
-                    active.keys(),
-                    timeout=SCHEDULER_WAIT_TIMEOUT_SECONDS,
-                    return_when=FIRST_COMPLETED,
-                )
-                if not done:
-                    _heartbeat_active(active.values(), mlflow_settings)
-                    continue
+            done, _ = wait(
+                active.keys(),
+                timeout=SCHEDULER_WAIT_TIMEOUT_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                _heartbeat_active(active.values(), mlflow_settings)
+                continue
 
-                for future in done:
-                    task, run_id = active.pop(future)
-                    if task.algorithm in HEAVY_ALGORITHMS:
-                        heavy_running -= 1
-                    try:
-                        result = future.result()
-                    except Exception as error:
-                        failed += 1
-                        _fail_run(run_id, error, mlflow_settings)
-                        pbar.update(1)
-                        pbar.set_postfix_str(f"{task.dataset_id}/{task.algorithm} FAIL", refresh=False)
-                        continue
-                    completed += 1
-                    _finish_run(run_id, task, result, mlflow_settings)
+            for future in done:
+                task, run_id = active.pop(future)
+                if task.algorithm in HEAVY_ALGORITHMS:
+                    heavy_running -= 1
+                try:
+                    result = future.result()
+                except Exception as error:
+                    failed += 1
+                    _fail_run(run_id, error, mlflow_settings)
                     pbar.update(1)
-                    pbar.set_postfix_str(f"{task.dataset_id}/{task.algorithm}", refresh=False)
+                    pbar.set_postfix_str(f"{task.dataset_id}/{task.algorithm} FAIL", refresh=False)
+                    continue
+                completed += 1
+                _finish_run(run_id, task, result, mlflow_settings)
+                pbar.update(1)
+                pbar.set_postfix_str(f"{task.dataset_id}/{task.algorithm}", refresh=False)
 
-            if interrupt.interrupted:
-                for future, (_, run_id) in list(active.items()):
-                    future.cancel()
-                    _kill_run(run_id, mlflow_settings)
-                    killed += 1
-                    pbar.update(1)
-                    pbar.set_postfix_str("interrupted", refresh=False)
+        if interrupt.interrupted:
+            for future, (_, run_id) in list(active.items()):
+                future.cancel()
+                _kill_run(run_id, mlflow_settings)
+                killed += 1
+                pbar.update(1)
+                pbar.set_postfix_str("interrupted", refresh=False)
 
     _LOGGER.info(
         "Scheduler finished: completed=%d failed=%d killed=%d",

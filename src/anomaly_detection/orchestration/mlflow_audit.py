@@ -25,7 +25,10 @@ BASE_EXTRA_METRICS_PHASE4: frozenset[str] = frozenset(
         "n_samples_fit",
     }
 )
-"""Extras logged for phase-4 paths including Sobol/LHS/bootstrap (see ``runner`` / ``sensitivity_execution``)."""
+"""Extras logged for phase-4 paths (Sobol/LHS/bootstrap).
+
+See ``runner`` and ``sensitivity_execution``.
+"""
 
 SCHEDULER_METRICS: frozenset[str] = frozenset({"runtime_seconds"})
 """Always logged in ``_finish_run`` after a task completes."""
@@ -191,9 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = (
-        MlflowSettings(tracking_uri=args.tracking_uri)
-        if args.tracking_uri
-        else MlflowSettings()
+        MlflowSettings(tracking_uri=args.tracking_uri) if args.tracking_uri else MlflowSettings()
     )
     db_hint = ""
     if settings.tracking_uri.startswith("sqlite:///"):

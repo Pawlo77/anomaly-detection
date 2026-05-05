@@ -1,7 +1,5 @@
 """Latin Hypercube samples for RBF OCSVM grids (experimental plan §2.1 LHS note)."""
 
-
-
 from dataclasses import dataclass
 from typing import Any
 

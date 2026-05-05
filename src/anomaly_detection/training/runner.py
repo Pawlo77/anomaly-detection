@@ -6,8 +6,6 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
-
-from ..warnings_filters import apply_known_sklearn_experiment_warnings
 import numpy.typing as npt
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -31,6 +29,7 @@ from ..models.params import (
     LOFParams,
     OCSVMParams,
 )
+from ..warnings_filters import apply_known_sklearn_experiment_warnings
 from .blind_features import prepare_blind_feature_matrix
 from .tasks import ExperimentTask
 

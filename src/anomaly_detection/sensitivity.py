@@ -80,7 +80,11 @@ class HyperparameterSpec(BaseModel):
 
     @property
     def bounds(self) -> tuple[float, float]:
-        """Return numeric bounds consumed by SALib."""
+        """Numeric bounds tuples SALib consumes for continuous sampling axes.
+
+        Returns:
+            ``(low, high)`` pair; categorical knobs map to enumerated indices.
+        """
         if self.kind == "categorical":
             assert self.choices is not None  # validated in model validator
             return (0.0, float(len(self.choices) - 1))
@@ -104,7 +108,14 @@ class SobolSpace(BaseModel):
     def validate_unique_names(
         cls, parameters: tuple[HyperparameterSpec, ...]
     ) -> tuple[HyperparameterSpec, ...]:
-        """Validate hyperparameter names are unique."""
+        """Validate Sobol axis labels remain injective for decoding.
+
+        Returns:
+            Echoed ``parameters`` tuple when uniqueness holds.
+
+        Raises:
+            ValueError: When duplicate textual names collide.
+        """
         names = [parameter.name for parameter in parameters]
         if len(names) != len(set(names)):
             raise ValueError("Hyperparameter names must be unique.")
@@ -112,7 +123,11 @@ class SobolSpace(BaseModel):
 
     @property
     def salib_problem(self) -> dict[str, Any]:
-        """Return SALib ``problem`` dictionary."""
+        """``problem`` dictionary expected by SALib sampling routines.
+
+        Returns:
+            Keys ``num_vars``, ``names``, and ``bounds`` for Saltelli tooling.
+        """
         return {
             "num_vars": len(self.parameters),
             "names": [parameter.name for parameter in self.parameters],
@@ -120,7 +135,14 @@ class SobolSpace(BaseModel):
         }
 
     def decode_row(self, row: FloatArray) -> dict[str, float | int | str]:
-        """Decode sampled numeric row into typed hyperparameter dictionary."""
+        """Vectorize Sobol draws into estimator-ready keyword dictionaries.
+
+        Args:
+            row: Length-``num_vars`` float vector respecting parameter order.
+
+        Returns:
+            Mapping hyperparameter names to decoded scalars/strings.
+        """
         values: dict[str, float | int | str] = {}
         for index, parameter in enumerate(self.parameters):
             values[parameter.name] = parameter.decode(float(row[index]))
@@ -179,7 +201,14 @@ class StabilityConstraint:
 
 
 def _require_salib() -> tuple[Any, Any]:
-    """Import SALib dependencies or raise explicit error."""
+    """Import Saltelli helpers or raise actionable guidance.
+
+    Returns:
+        Tuple ``(saltelli_module, sobol_module)`` from SALib.
+
+    Raises:
+        SensitivityError: When SALib is not installed in the interpreter.
+    """
     try:
         from SALib.analyze import sobol
         from SALib.sample import saltelli

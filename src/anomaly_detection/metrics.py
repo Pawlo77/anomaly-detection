@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+from scipy import stats as scipy_stats
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -44,7 +45,7 @@ class MetricThresholdConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contamination: float = Field(default=0.1, gt=0.0, le=0.5)
+    contamination: float = Field(default=0.1, ge=0.0, le=1.0)
     outlier_label: int = Field(default=OUTLIER_LABEL)
     inlier_label: int = Field(default=INLIER_LABEL)
 
@@ -181,7 +182,9 @@ def labels_from_scores(
 
     n_samples = int(score_vector.size)
     n_outliers = int(np.ceil(cfg.contamination * n_samples))
-    n_outliers = int(np.clip(n_outliers, 1, n_samples))
+    n_outliers = int(np.clip(n_outliers, 0, n_samples))
+    if n_outliers == 0:
+        return np.full(score_vector.shape, fill_value=cfg.inlier_label, dtype=np.int64)
     labels = np.full(score_vector.shape, fill_value=cfg.inlier_label, dtype=np.int64)
     sorted_idx = np.lexsort((np.arange(n_samples, dtype=np.int64), -score_vector))
     outlier_idx = sorted_idx[:n_outliers]
@@ -190,7 +193,15 @@ def labels_from_scores(
 
 
 def metric_accuracy(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
-    """Compute binary accuracy for anomaly labels."""
+    """Compute binary accuracy for anomaly labels.
+
+    Args:
+        y_true: Ground-truth binary labels.
+        y_pred: Thresholded predictions aligned sample-wise.
+
+    Returns:
+        Fraction of agreeing labels within ``[0, 1]``.
+    """
     yt = _as_int_vector(y_true)
     yp = _as_int_vector(y_pred)
     _validate_equal_length(yt, yp)
@@ -198,7 +209,15 @@ def metric_accuracy(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
 
 
 def metric_precision(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
-    """Compute anomaly precision with deterministic zero handling."""
+    """Compute anomaly precision with deterministic zero-handling safeguards.
+
+    Args:
+        y_true: Ground-truth labels for positives (outliers coded as ``OUTLIER_LABEL``).
+        y_pred: Discrete predictions referencing the same label encoding.
+
+    Returns:
+        Precision for the anomaly class respecting sklearn ``zero_division`` policy.
+    """
     yt = _as_int_vector(y_true)
     yp = _as_int_vector(y_pred)
     _validate_equal_length(yt, yp)
@@ -206,7 +225,15 @@ def metric_precision(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
 
 
 def metric_recall(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
-    """Compute anomaly recall with deterministic zero handling."""
+    """Compute anomaly recall with deterministic zero-handling safeguards.
+
+    Args:
+        y_true: Ground-truth anomalies versus inliers per project constants.
+        y_pred: Detector predictions subjected to identical encoding.
+
+    Returns:
+        Recall for detecting labeled anomalies.
+    """
     yt = _as_int_vector(y_true)
     yp = _as_int_vector(y_pred)
     _validate_equal_length(yt, yp)
@@ -214,7 +241,15 @@ def metric_recall(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
 
 
 def metric_f1(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
-    """Compute anomaly F1 with deterministic zero handling."""
+    """Harmonic mean of anomaly precision/recall with stable zero denominators.
+
+    Args:
+        y_true: Validation labels.
+        y_pred: Detector outputs snapped to discrete classes.
+
+    Returns:
+        Macro-stable F1 for the anomaly class.
+    """
     yt = _as_int_vector(y_true)
     yp = _as_int_vector(y_pred)
     _validate_equal_length(yt, yp)
@@ -222,7 +257,15 @@ def metric_f1(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
 
 
 def metric_mcc(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
-    """Compute Matthews correlation coefficient."""
+    """Compute Matthews correlation coefficient balancing class skew.
+
+    Args:
+        y_true: Ground-truth binary vector.
+        y_pred: Comparable prediction vector identical length/shape rules.
+
+    Returns:
+        Signed correlation statistic within ``[-1, 1]``.
+    """
     yt = _as_int_vector(y_true)
     yp = _as_int_vector(y_pred)
     _validate_equal_length(yt, yp)
@@ -230,9 +273,14 @@ def metric_mcc(y_true: npt.ArrayLike, y_pred: npt.ArrayLike) -> float:
 
 
 def metric_roc_auc(y_true: npt.ArrayLike, scores: npt.ArrayLike) -> float:
-    """Compute ROC-AUC from ground truth and continuous scores.
+    """Compute ROC-AUC ranking quality for anomaly scores.
 
-    Returns 0.5 when a single class is present to keep pipeline stable.
+    Args:
+        y_true: Binary labels aligning with anomaly scores dimensionality.
+        scores: Monotone anomaly scores emitted by detectors.
+
+    Returns:
+        ROC-AUC in ``[0, 1]``, defaulting ``0.5`` when positives/negatives are singletons.
     """
     yt = _as_int_vector(y_true)
     ys = _as_float_vector(scores)
@@ -243,9 +291,14 @@ def metric_roc_auc(y_true: npt.ArrayLike, scores: npt.ArrayLike) -> float:
 
 
 def metric_pr_auc(y_true: npt.ArrayLike, scores: npt.ArrayLike) -> float:
-    """Compute average precision from ground truth and continuous scores.
+    """Compute PR-AUC (average precision) for imbalanced anomalies.
 
-    Returns 0.0 when no positive class is present.
+    Args:
+        y_true: Binary labels aligning with anomaly scores dimensionality.
+        scores: Ranking scores prioritized for recall-oriented evaluation.
+
+    Returns:
+        Average precision in ``[0, 1]``, or ``0.0`` if positives are absent.
     """
     yt = _as_int_vector(y_true)
     ys = _as_float_vector(scores)
@@ -253,6 +306,73 @@ def metric_pr_auc(y_true: npt.ArrayLike, scores: npt.ArrayLike) -> float:
     if np.sum(yt == OUTLIER_LABEL) == 0:
         return 0.0
     return float(average_precision_score(yt, ys))
+
+
+def majority_inlier_accuracy(contamination: float) -> float:
+    """Accuracy when labeling every point as normal (plan §3.1 SMTP-style baseline).
+
+    Args:
+        contamination: Fraction of positives in the population.
+
+    Returns:
+        Limiting accuracy roughly ``1 - contamination`` for large ``n``.
+    """
+    c = float(contamination)
+    return float(max(0.0, min(1.0, 1.0 - c)))
+
+
+def smtp_extreme_skew_metrics(
+    contamination: float,
+    model_accuracy: float,
+) -> dict[str, float]:
+    """Demonstrate why accuracy is misleading when positives are extremely rare (§3.1).
+
+    Compares the evaluated ``model_accuracy`` against the always-normal majority baseline.
+    """
+    baseline = majority_inlier_accuracy(contamination)
+    return {
+        "always_normal_accuracy_ceiling": baseline,
+        "accuracy_deficit_vs_always_normal": float(model_accuracy) - baseline,
+    }
+
+
+def mean_absolute_pairwise_spearman(predictions: npt.ArrayLike) -> float:
+    """Average absolute Spearman rho across unique column pairs (plan §2.5 ECOD stability).
+
+    Args:
+        predictions: Integer or float matrix ``(n_samples, n_settings)`` such as binary preds.
+
+    Returns:
+        Mean absolute Spearman correlation across column pairs, ``nan`` when ``< 2`` columns.
+    """
+    matrix = np.asarray(predictions)
+    if matrix.ndim != 2 or matrix.shape[1] < 2:
+        return float("nan")
+    cols = matrix.shape[1]
+    accum: list[float] = []
+    for left in range(cols):
+        for right in range(left + 1, cols):
+            rho, _ = scipy_stats.spearmanr(matrix[:, left], matrix[:, right])
+            if np.isnan(rho):
+                continue
+            accum.append(abs(float(rho)))
+    return float(np.mean(np.asarray(accum, dtype=np.float64))) if accum else float("nan")
+
+
+def contamination_slice_prediction_stability(
+    scores: npt.ArrayLike,
+    contamination_values: npt.ArrayLike,
+) -> dict[str, float]:
+    """Spearman stability between binary preds sliced at many contamination cutoffs (§2.5 ECOD)."""
+    ys = _as_float_vector(scores)
+    cont = np.asarray(contamination_values, dtype=np.float64).ravel()
+    stacked = np.column_stack(
+        tuple(
+            labels_from_scores(ys, MetricThresholdConfig(contamination=float(c))).astype(np.float64)
+            for c in cont
+        )
+    )
+    return {"mean_abs_pairwise_spearman_preds": mean_absolute_pairwise_spearman(stacked)}
 
 
 @dataclass(slots=True, frozen=True)

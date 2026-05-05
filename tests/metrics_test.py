@@ -1,15 +1,16 @@
 """Tests for unified anomaly metrics protocol."""
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 
 from anomaly_detection.metrics import (
     DEFAULT_METRICS_PROTOCOL,
     MetricThresholdConfig,
+    contamination_slice_prediction_stability,
     evaluate_metrics,
     labels_from_scores,
+    majority_inlier_accuracy,
+    mean_absolute_pairwise_spearman,
     metric_accuracy,
     metric_f1,
     metric_mcc,
@@ -17,6 +18,7 @@ from anomaly_detection.metrics import (
     metric_precision,
     metric_recall,
     metric_roc_auc,
+    smtp_extreme_skew_metrics,
 )
 
 
@@ -33,6 +35,13 @@ def test_labels_from_scores_respects_contamination() -> None:
     labels = labels_from_scores(scores, MetricThresholdConfig(contamination=1 / 3))
     assert labels.sum() == 2
     assert set(np.unique(labels)).issubset({0, 1})
+
+
+def test_labels_from_scores_zero_contamination_all_inliers() -> None:
+    """Zero contamination clears the outlier budget (plan datasets with purely inlier probes)."""
+    scores = np.array([0.1, 3.9, 0.2], dtype=np.float64)
+    labels = labels_from_scores(scores, MetricThresholdConfig(contamination=0.0))
+    assert int(labels.sum()) == 0
 
 
 def test_labels_from_scores_uses_deterministic_tie_breaking() -> None:
@@ -110,3 +119,46 @@ def test_protocol_uses_custom_metric_composition() -> None:
     y_true, scores = _fixture_labels_scores()
     report = evaluate_metrics(y_true, scores, protocol=custom_protocol)
     assert report.accuracy == pytest.approx(0.123)
+
+
+def test_majority_inlier_accuracy_matches_extreme_skew_story() -> None:
+    """§3.1 majority baseline approximates ``1 - c`` for rare positives."""
+    smtp_c = 0.0003
+    assert majority_inlier_accuracy(smtp_c) == pytest.approx(1.0 - smtp_c, rel=0, abs=1e-6)
+
+
+def test_smtp_extreme_skew_flags_accuracy_gap() -> None:
+    """Poor detector can trail always-normal strat."""
+    contour = smtp_extreme_skew_metrics(
+        contamination=0.0003,
+        model_accuracy=0.995,
+    )
+    assert contour["accuracy_deficit_vs_always_normal"] < 0
+
+
+def test_mean_absolute_pairwise_spearman_perfect_corr() -> None:
+    preds = np.array([[1, 1], [1, 1], [0, 0]], dtype=np.float64)
+    assert mean_absolute_pairwise_spearman(preds) == pytest.approx(1.0)
+
+
+def test_mean_pairwise_spearman_on_duplicated_predictions() -> None:
+    ys = np.array([9.8, 0.01, 0.5, -1.5, -2.8], dtype=np.float64)
+    pred = labels_from_scores(ys, MetricThresholdConfig(contamination=0.2))
+    dup = np.column_stack([pred, pred]).astype(np.float64)
+    assert mean_absolute_pairwise_spearman(dup) == pytest.approx(1.0)
+
+
+def test_contamination_slice_matches_rank_stability_gadget() -> None:
+    ys = np.linspace(-1.0, 10.0, num=96, dtype=np.float64)
+    cont_levels = np.array([0.05, 0.10], dtype=np.float64)
+    out = contamination_slice_prediction_stability(ys, cont_levels)
+    manual = np.column_stack(
+        tuple(
+            labels_from_scores(
+                ys, MetricThresholdConfig(contamination=float(cont_levels[j]))
+            ).astype(np.float64)
+            for j in range(cont_levels.shape[0])
+        )
+    )
+    expected = mean_absolute_pairwise_spearman(manual)
+    assert out["mean_abs_pairwise_spearman_preds"] == pytest.approx(expected)

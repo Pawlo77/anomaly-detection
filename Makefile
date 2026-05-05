@@ -25,7 +25,7 @@ help:
 	@echo "  make test                   - Run tests"
 	@echo "  make pre-commit             - Run pre-commit checks on changed files"
 	@echo "  make pre-commit-all         - Run pre-commit checks on all files"
-	@echo "  make datasets               - Download/build all dataset variants (default, small, extended)"
+	@echo "  make datasets               - Run full datasets pipeline end-to-end"
 	@echo "  make mlflow                 - Launch MLflow UI for local runs"
 	@echo "  make mlflow-stop            - Stop local MLflow UI processes"
 
@@ -53,7 +53,7 @@ pre-commit-all:
 
 # Download/build all dataset variants used by the project.
 datasets:
-	echo "Note implemented."
+	uv run python -m anomaly_detection.datasets.cli
 
 #########################
 # Orchestration Targets #

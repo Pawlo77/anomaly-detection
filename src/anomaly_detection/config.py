@@ -6,9 +6,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Self
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TRACKING_URI_MLRUNS_ALIAS = "mlruns"
 """Backward-compatible shorthand for local MLflow storage."""
@@ -16,8 +15,8 @@ TRACKING_URI_MLRUNS_ALIAS = "mlruns"
 TRACKING_URI_SQLITE_DEFAULT = "sqlite:///mlruns.db"
 """Default SQLite-backed MLflow tracking URI."""
 
-TRACKING_EXPERIMENT_DEFAULT = "speech-recognition"
-"""Default MLflow experiment name."""
+TRACKING_EXPERIMENT_DEFAULT = "anomaly_detection"
+"""Default MLflow experiment name when settings do not override it."""
 
 DATASETS_ENV_PREFIX = "ANOMALY_DATASETS_"
 """Environment prefix for dataset settings."""
@@ -50,6 +49,12 @@ DEFAULT_DATASET_MIN_ROW_RATIO = 0.9
 DEFAULT_DATASET_MIN_FEATURE_RATIO = 0.9
 """Minimum acceptable ratio of actual features to expected features."""
 
+ORCHESTRATION_ENV_PREFIX = "ANOMALY_ORCH_"
+"""Environment-variable prefix for orchestration runtime settings."""
+
+MLFLOW_ENV_PREFIX = "ANOMALY_MLFLOW_"
+"""Environment-variable prefix for MLflow runtime settings."""
+
 
 class ConfigValidationError(ValueError):
     """Raised when a generic configuration value is invalid."""
@@ -60,19 +65,42 @@ class DatasetConfigError(ValueError):
 
 
 def _require(condition: bool, message: str) -> None:
-    """Raise a config validation error when condition is false."""
+    """Assert predicate for configuration payloads.
+
+    Args:
+        condition: Expression that must evaluate true.
+        message: Human-readable failure detail.
+
+    Raises:
+        ConfigValidationError: If ``condition`` is false.
+    """
     if not condition:
         raise ConfigValidationError(message)
 
 
 def _require_str(name: str, value: str) -> None:
-    """Validate that a value is a non-empty string."""
+    """Ensure a configuration string is syntactically usable.
+
+    Args:
+        name: Field label used in errors.
+        value: Candidate string value.
+
+    Raises:
+        ConfigValidationError: When empty or non-string after trimming.
+    """
     _require(isinstance(value, str), f"{name} must be a string.")
     _require(bool(value.strip()), f"{name} must not be empty.")
 
 
 def _serialize(value: Any) -> Any:
-    """Convert nested dataclasses and containers into JSON-friendly values."""
+    """Convert nested dataclasses and containers into JSON-friendly values.
+
+    Args:
+        value: Arbitrary nested structure rooted in primitives or dataclasses.
+
+    Returns:
+        Recursive structure using only lists, dicts, and primitives.
+    """
     if is_dataclass(value):
         return {field.name: _serialize(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, tuple):
@@ -85,13 +113,34 @@ def _serialize(value: Any) -> Any:
 
 
 def _extract_mapping(data: Mapping[str, Any] | Any, name: str) -> Mapping[str, Any]:
-    """Validate and return mapping input for `from_dict` helpers."""
+    """Validate structured input for pydantic/from_dict loaders.
+
+    Args:
+        data: Candidate mapping body.
+        name: Configuration object label for diagnostics.
+
+    Returns:
+        The same mapping view after validation.
+
+    Raises:
+        ConfigValidationError: If ``data`` is not a mapping.
+    """
     _require(isinstance(data, Mapping), f"{name} must be a mapping.")
     return data
 
 
 def _parse_bool(value: str) -> bool:
-    """Parse strict boolean from environment string."""
+    """Parse a strict boolean literal from environment text.
+
+    Args:
+        value: Raw string token from env configuration.
+
+    Returns:
+        Parsed boolean.
+
+    Raises:
+        DatasetConfigError: If no supported keyword matches ``value``.
+    """
     normalized = value.strip().lower()
     if normalized in {"1", "true", "yes", "on"}:
         return True
@@ -101,21 +150,42 @@ def _parse_bool(value: str) -> bool:
 
 
 def _parse_int_tuple(value: str) -> tuple[int, ...]:
-    """Parse comma-separated integer list into tuple."""
+    """Parse comma-separated integers into an immutable tuple.
+
+    Args:
+        value: Possibly empty comma-separated numeric list.
+
+    Returns:
+        Parsed tuple, empty when ``value`` is blank.
+    """
     if not value.strip():
         return ()
     return tuple(int(token.strip()) for token in value.split(",") if token.strip())
 
 
 def _parse_float_tuple(value: str) -> tuple[float, ...]:
-    """Parse comma-separated float list into tuple."""
+    """Parse comma-separated floats into an immutable tuple.
+
+    Args:
+        value: Possibly empty comma-separated float list.
+
+    Returns:
+        Parsed tuple, empty when ``value`` is blank.
+    """
     if not value.strip():
         return ()
     return tuple(float(token.strip()) for token in value.split(",") if token.strip())
 
 
 def _parse_caps(value: str) -> dict[str, int]:
-    """Parse algorithm cap map from `name:value,name:value` string."""
+    """Parse algorithm throughput caps serialized as comma pairs.
+
+    Args:
+        value: String shaped like ``"OCSVM:20000,LOF:20000"``.
+
+    Returns:
+        Mapping algorithm name to nonnegative integer caps.
+    """
     caps: dict[str, int] = {}
     if not value.strip():
         return caps
@@ -127,48 +197,79 @@ def _parse_caps(value: str) -> dict[str, int]:
     return caps
 
 
-@dataclass(frozen=True, slots=True)
-class MLflowTrackingConfig:
-    """Local MLflow tracking configuration.
+class MlflowSettings(BaseSettings):
+    """Unified MLflow tracking settings.
 
     Attributes:
         enabled: Whether MLflow integration is enabled.
         tracking_uri: MLflow tracking backend URI.
-        experiment_name: MLflow experiment name.
+        experiment_name: Default MLflow experiment name.
+        experiment_name_phase4: MLflow experiment name for phase-4 tasks.
+        experiment_name_phase5: MLflow experiment name for phase-5 tasks.
         run_name: Optional explicit run name.
         log_params: Whether to log run parameters.
         log_metrics: Whether to log metrics.
         log_artifacts: Whether to upload artifacts.
         retain_local_checkpoints: Whether to keep checkpoints after upload.
+        heartbeat_metric_key: Metric key used for scheduler heartbeat writes.
+        delete_incomplete_runs: Whether failed/killed runs are soft-deleted.
     """
+
+    model_config = SettingsConfigDict(
+        env_prefix=MLFLOW_ENV_PREFIX,
+        extra="ignore",
+        frozen=True,
+    )
 
     enabled: bool = True
     tracking_uri: str = TRACKING_URI_SQLITE_DEFAULT
     experiment_name: str = TRACKING_EXPERIMENT_DEFAULT
+    experiment_name_phase4: str = "anomaly_detection/phase4"
+    experiment_name_phase5: str = "anomaly_detection/phase5"
     run_name: str | None = None
     log_params: bool = True
     log_metrics: bool = True
     log_artifacts: bool = True
     retain_local_checkpoints: bool = False
+    heartbeat_metric_key: str = "system.heartbeat_unix"
+    delete_incomplete_runs: bool = True
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def validate_settings(self) -> "MlflowSettings":
+        """Validate coherence of mutually dependent MLflow fields.
+
+        Returns:
+            The unchanged settings instance when validation succeeds.
+        """
         if self.enabled:
             _require_str("tracking_uri", self.tracking_uri)
         _require_str("experiment_name", self.experiment_name)
         if self.run_name is not None:
             _require_str("run_name", self.run_name)
+        return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation of tracking config."""
-        return _serialize(self)
+        """Serialize settings for JSON/logging consumers.
+
+        Returns:
+            Primitive mapping equivalent to pydantic dump mode ``json``.
+        """
+        return self.model_dump(mode="json")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
-        """Build tracking config from a mapping."""
-        mapping = _extract_mapping(data, name="MLflowTrackingConfig")
+        """Hydrate MLflow configuration from unstructured input.
+
+        Args:
+            data: Mapping containing pydantic-compatible keys.
+
+        Returns:
+            Validated immutable settings snapshot.
+        """
+        mapping = _extract_mapping(data, name="MlflowSettings")
         if mapping.get("tracking_uri") == TRACKING_URI_MLRUNS_ALIAS:
             mapping = {**mapping, "tracking_uri": TRACKING_URI_SQLITE_DEFAULT}
-        return cls(**dict(mapping))
+        return cls.model_validate(dict(mapping))
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,28 +278,63 @@ class ExperimentConfig:
 
     Attributes:
         random_seed: Base random seed used across the project.
-        tracking: Nested MLflow tracking configuration.
+        tracking: Nested MLflow settings.
     """
 
     random_seed: int = 42
-    tracking: MLflowTrackingConfig = field(default_factory=MLflowTrackingConfig)
+    tracking: MlflowSettings = field(default_factory=MlflowSettings)
 
     def __post_init__(self) -> None:
         _require(self.random_seed >= 0, "random_seed must be >= 0.")
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation of experiment config."""
+        """Serialize experiment-wide settings for bookkeeping.
+
+        Returns:
+            Recursive JSON-compatible mapping.
+        """
         return _serialize(self)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
-        """Build experiment config from a mapping."""
+        """Construct experiment configuration from dictionaries.
+
+        Args:
+            data: Mapping containing nested ``tracking`` payloads when needed.
+
+        Returns:
+            Parsed dataclass wired with nested pydantic MLflow objects.
+        """
         mapping = _extract_mapping(data, name="ExperimentConfig")
         payload = dict(mapping)
         tracking_raw = payload.get("tracking")
         if isinstance(tracking_raw, Mapping):
-            payload["tracking"] = MLflowTrackingConfig.from_dict(tracking_raw)
+            payload["tracking"] = MlflowSettings.from_dict(tracking_raw)
         return cls(**payload)
+
+
+class OrchestrationSettings(BaseSettings):
+    """Runtime settings for experiment orchestration.
+
+    Attributes:
+        phase: Requested orchestration phase (`phase4`, `oracle`, `phase5`, or `all`).
+        jobs: Maximum number of concurrent worker processes.
+        stale_ttl_seconds: Heartbeat TTL for stale running-run detection.
+        heavy_max_concurrent: Maximum number of heavy tasks run concurrently.
+        fail_on_duplicate_running: Whether duplicate RUNNING runs should raise.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix=ORCHESTRATION_ENV_PREFIX,
+        extra="ignore",
+        frozen=True,
+    )
+
+    phase: str = Field(default="all")
+    jobs: int = Field(default=4, ge=1)
+    stale_ttl_seconds: int = Field(default=600, ge=5)
+    heavy_max_concurrent: int = Field(default=2, ge=1)
+    fail_on_duplicate_running: bool = Field(default=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,7 +408,11 @@ class DatasetSettings:
 
     @classmethod
     def from_env(cls) -> "DatasetSettings":
-        """Create dataset settings from environment variables."""
+        """Construct dataset defaults reading ``ANOMALY_DATASETS_*`` environment variables.
+
+        Returns:
+            Hydrated immutable settings respecting present environment keys.
+        """
         prefix = DATASETS_ENV_PREFIX
         values: dict[str, object] = {}
         env = os.environ
@@ -332,7 +472,14 @@ class DatasetSettings:
         return cls(**values)
 
     def resolve(self, target: Path) -> Path:
-        """Resolve path relative to root directory."""
+        """Resolve possibly relative filesystem paths against ``root_dir``.
+
+        Args:
+            target: Candidate filesystem path literal.
+
+        Returns:
+            Absolute path rooted at ``root_dir`` when ``target`` is relative.
+        """
         if target.is_absolute():
             return target
         return (self.root_dir / target).resolve()

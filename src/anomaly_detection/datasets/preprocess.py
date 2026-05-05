@@ -51,6 +51,12 @@ def _split_arrhythmia_feature_types(frame: pd.DataFrame) -> tuple[list[str], lis
 
     Object/category/bool columns are categorical. Integer-like columns with low cardinality
     are also treated as nominal to handle numerically encoded categories.
+
+    Args:
+        frame: Raw ``arrhythmia`` feature table excluding labels.
+
+    Returns:
+        Pair ``(categorical_columns, numeric_columns)``.
     """
     categorical: list[str] = []
     numeric: list[str] = []
@@ -135,7 +141,14 @@ def preprocess_arrhythmia(frame: pd.DataFrame) -> pd.DataFrame:
 def preprocess_arrhythmia_with_report(
     frame: pd.DataFrame,
 ) -> tuple[pd.DataFrame, ArrhythmiaPreprocessReport]:
-    """Run arrhythmia preprocessing and emit quality report."""
+    """Run arrhythmia preprocessing alongside missingness bookkeeping.
+
+    Args:
+        frame: Raw feature-rich arrhythmia table prior to iterative imputation.
+
+    Returns:
+        Tuple of engineered numeric matrix plus ``ArrhythmiaPreprocessReport``.
+    """
     output = preprocess_arrhythmia(frame)
     categorical, numeric = _split_arrhythmia_feature_types(frame)
     if numeric:

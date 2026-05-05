@@ -1,4 +1,4 @@
-"""Sampling helpers for large and bootstrap workloads."""
+"""Deterministic downsampling helpers guarding expensive algorithms."""
 
 import pandas as pd
 

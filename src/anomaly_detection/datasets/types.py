@@ -1,4 +1,4 @@
-"""Core typed models for dataset subpackage."""
+"""Lightweight dataclasses describing in-memory dataset bundles and ID unions."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +48,7 @@ DatasetId = Literal[
     "fcps/lsun",
     "graves/fuzzyx",
 ]
+"""Union of all dataset identifiers known to the project catalog."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,8 @@ class DatasetBundle:
 
     Attributes:
         dataset_id: Dataset identifier from project catalog.
-        view: Materialized view name, e.g. raw/preprocessed/pca_95.
+        view: Materialized preprocessing mode such as ``raw``, ``preprocessed``,
+            ``pca95``, or subsample-specific prefixes emitted by loaders.
         X: Feature matrix with numeric columns only.
         y: Binary labels where 1 means outlier.
         source_path: Path to persisted canonical table.

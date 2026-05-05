@@ -1,4 +1,4 @@
-"""Canonicalization from raw artifacts to project schema."""
+"""Normalize heterogeneous raw downloads into unified CSV schemas with labels."""
 
 import gzip
 import io
@@ -74,15 +74,31 @@ class CanonicalizationResult:
 
 
 class Canonicalizer:
-    """Convert raw artifacts into canonical CSV with `label` column."""
+    """Stateful adapter dispatching parsers per dataset lineage.
+
+    The resulting tables always expose the ``label`` binary column enforced by loaders.
+    """
 
     def __init__(self) -> None:
-        """Create canonicalizer."""
+        """Instantiate dispatcher with lazily populated parser registry lookups."""
 
     def canonicalize(
         self, spec: DatasetSpec, raw_path: Path, output_path: Path
     ) -> CanonicalizationResult:
-        """Build canonical table for one dataset."""
+        """Parse ``raw_path`` streams and emit normalized CSV shards.
+
+        Args:
+            spec: Catalog row describing downloader targets and quirks.
+            raw_path: On-disk footprint produced by ingest stage.
+            output_path: Final canonical CSV destination.
+
+        Returns:
+            Lightweight summary describing artifact dimensions and parsers used.
+
+        Raises:
+            FileNotFoundError: When ``raw_path`` is unexpectedly missing locally.
+            ValueError: When no parser understands the artifact bytes.
+        """
         parser_name, frame = self._parse_raw(spec, raw_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(output_path, index=False)

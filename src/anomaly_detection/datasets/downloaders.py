@@ -1,4 +1,4 @@
-"""Download adapters for dataset sources."""
+"""HTTP/zip download adapters populating ``data/raw`` style artifacts."""
 
 import hashlib
 import zipfile
@@ -33,10 +33,14 @@ class DownloadResult:
 
 
 class DatasetDownloader:
-    """Downloader for URL-backed dataset sources."""
+    """Stream remote dataset archives into deterministic local raw paths.
+
+    Attributes:
+        settings: Root directories plus HTTP timeouts governing fetch behavior.
+    """
 
     def __init__(self, settings: DatasetSettings):
-        """Create downloader with environment-configurable backend commands."""
+        """Bind filesystem layout used when materializing hashed raw artifacts."""
         self.settings = settings
 
     def download(self, spec: DatasetSpec, target_dir: Path) -> DownloadResult:

@@ -1,7 +1,8 @@
-"""CLI entry point for dataset pipeline."""
+"""CLI façade delegating dataset builds to ``run_datasets_pipeline``."""
 
 import logging
 
+from ..warnings_filters import apply_known_sklearn_experiment_warnings
 from .pipeline import run_datasets_pipeline
 
 CLI_COMMAND_NAME = "datasets"
@@ -12,8 +13,9 @@ LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
 def main() -> None:
-    """Run full datasets pipeline end-to-end."""
+    """Configure logging verbosity then execute every pipeline stage serially."""
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    apply_known_sklearn_experiment_warnings()
     run_datasets_pipeline()
 
 

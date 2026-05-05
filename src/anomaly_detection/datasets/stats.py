@@ -1,18 +1,14 @@
-"""Descriptive statistics generation for report inputs."""
+"""Descriptive statistics for canonical datasets feeding reports and loaders."""
 
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
+from ..geometry import distance_concentration_ratio
+
 DISTANCE_SAMPLE_LIMIT = 300
-"""Maximum rows used when estimating distance concentration."""
-
-DISTANCE_PAIR_COUNT = 500
-"""Number of random pairwise distances used for concentration estimate."""
-
-DISTANCE_RANDOM_SEED = 42
-"""Deterministic seed for distance concentration sampling."""
+"""Maximum leading rows passed to ``distance_concentration_ratio`` after ``dropna``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +60,7 @@ def compute_descriptive_stats(frame: pd.DataFrame, label_column: str) -> Dataset
     inlier_count = int(frame.shape[0] - outlier_count)
     numeric = frame.drop(columns=[label_column]).select_dtypes(include=["number"])
     mean_abs_correlation = _mean_abs_correlation(numeric)
-    distance_concentration_ratio = _distance_concentration_ratio(numeric)
+    dcr = _dataset_distance_concentration_ratio(numeric)
     return DatasetStats(
         n_rows=frame.shape[0],
         n_features=frame.shape[1] - 1,
@@ -74,12 +70,19 @@ def compute_descriptive_stats(frame: pd.DataFrame, label_column: str) -> Dataset
         outlier_count=outlier_count,
         inlier_count=inlier_count,
         mean_abs_correlation=mean_abs_correlation,
-        distance_concentration_ratio=distance_concentration_ratio,
+        distance_concentration_ratio=dcr,
     )
 
 
 def _mean_abs_correlation(features: pd.DataFrame) -> float:
-    """Compute mean absolute correlation between numeric features."""
+    """Mean absolute pairwise correlation excluding the diagonal entries.
+
+    Args:
+        features: Numeric-only dataframe possibly high-dimensional/sparse correlations.
+
+    Returns:
+        Aggregate correlation magnitude in ``[0, 1]`` averaged over upper triangle.
+    """
     if features.shape[1] < 2:
         return 0.0
     corr = features.corr(numeric_only=True).abs().values
@@ -91,29 +94,14 @@ def _mean_abs_correlation(features: pd.DataFrame) -> float:
     return float(np.nanmean(upper))
 
 
-def _distance_concentration_ratio(features: pd.DataFrame) -> float:
-    """Compute distance concentration ratio from random pairwise distances."""
-    if features.empty or features.shape[0] < 3:
+def _dataset_distance_concentration_ratio(features: pd.DataFrame) -> float:
+    """Compute distance concentration on complete numeric rows (leading slice)."""
+    if features.empty or features.shape[0] < 2:
         return 0.0
-    sample = features.dropna().to_numpy(dtype=float, copy=False)
-    if sample.shape[0] < 3:
+    complete = features.dropna()
+    if complete.shape[0] < 2:
         return 0.0
-    sample = sample[: min(sample.shape[0], DISTANCE_SAMPLE_LIMIT)]
-    n_rows = sample.shape[0]
-    if n_rows < 3:
-        return 0.0
-
-    rng = np.random.default_rng(DISTANCE_RANDOM_SEED)
-    row_idx_a = rng.integers(0, n_rows, size=DISTANCE_PAIR_COUNT * 2)
-    row_idx_b = rng.integers(0, n_rows, size=DISTANCE_PAIR_COUNT * 2)
-    mask = row_idx_a != row_idx_b
-    row_idx_a = row_idx_a[mask][:DISTANCE_PAIR_COUNT]
-    row_idx_b = row_idx_b[mask][:DISTANCE_PAIR_COUNT]
-    if row_idx_a.size == 0:
-        return 0.0
-
-    distances = np.linalg.norm(sample[row_idx_a] - sample[row_idx_b], axis=1)
-    d_mean = float(np.mean(distances))
-    if d_mean == 0.0:
-        return 0.0
-    return float((np.max(distances) - np.min(distances)) / d_mean)
+    matrix = complete.to_numpy(dtype=np.float64, copy=False)[
+        : min(complete.shape[0], DISTANCE_SAMPLE_LIMIT)
+    ]
+    return float(distance_concentration_ratio(matrix))

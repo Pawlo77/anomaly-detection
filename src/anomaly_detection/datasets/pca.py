@@ -43,7 +43,16 @@ def pca_by_variance(frame: pd.DataFrame, variance_ratio: float, seed: int) -> pd
 def pca_by_variance_with_metadata(
     frame: pd.DataFrame, variance_ratio: float, seed: int
 ) -> PcaResult:
-    """Project features with variance-retaining PCA and metadata."""
+    """Project features with PCA while surfacing explanatory variance statistics.
+
+    Args:
+        frame: Numeric feature-only ``DataFrame``.
+        variance_ratio: Target cumulative variance in ``(0, 1]`` passed to sklearn.
+        seed: Random seed delegated to deterministic SVD backends.
+
+    Returns:
+        Structured ``PcaResult`` exposing transformed coordinates plus metadata counts.
+    """
     pca = PCA(n_components=variance_ratio, svd_solver="full", random_state=seed)
     transformed = pca.fit_transform(frame)
     columns = [f"{PCA_COMPONENT_PREFIX}{idx}" for idx in range(transformed.shape[1])]

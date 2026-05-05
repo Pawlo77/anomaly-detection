@@ -1,9 +1,10 @@
-"""Orchestration pipeline for `make datasets`."""
+"""End-to-end dataset build runner (download→canonical→preprocess→validate)."""
 
 import json
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict
+from functools import partial
 
 import pandas as pd
 from tqdm import tqdm
@@ -37,31 +38,40 @@ def run_datasets_pipeline(
     settings: DatasetSettings | None = None,
     catalog: DatasetCatalog | None = None,
 ) -> None:
-    """Execute full datasets pipeline end-to-end.
+    """Execute canonical download, preprocessing, PCA, subsample, and QA stages.
 
     Args:
-        settings: Optional settings override.
-        catalog: Optional catalog override, mostly for tests.
+        settings: Optional settings override; defaults to ``DatasetSettings.from_env``.
+        catalog: Optional catalog override, mostly exercised from unit tests.
     """
     cfg = settings or DatasetSettings.from_env()
     active_catalog = catalog or build_default_catalog()
     downloader = DatasetDownloader(settings=cfg)
-    LOGGER.info("Starting datasets pipeline for %d datasets", len(active_catalog.specs))
+    n_ds = len(active_catalog.specs)
+    LOGGER.info("Starting datasets pipeline for %d datasets", n_ds)
 
     _create_directories(cfg)
     LOGGER.info("Directories prepared")
-    _stage_download(active_catalog, cfg, downloader)
-    LOGGER.info("Download stage complete")
-    _stage_canonicalize(active_catalog, cfg)
-    LOGGER.info("Canonicalization stage complete")
-    _stage_preprocess_artifacts(active_catalog, cfg)
-    LOGGER.info("Preprocess/PCA stage complete")
-    _stage_subsamples(active_catalog, cfg)
-    LOGGER.info("Subsample stage complete")
-    _stage_descriptive_stats(cfg, active_catalog)
-    LOGGER.info("Descriptive stats stage complete")
-    _stage_validate(cfg, active_catalog)
-    LOGGER.info("Validation stage complete")
+
+    stages: list[tuple[str, Callable[[], None]]] = [
+        ("download", partial(_stage_download, active_catalog, cfg, downloader)),
+        ("canonicalize", partial(_stage_canonicalize, active_catalog, cfg)),
+        ("preprocess_pca", partial(_stage_preprocess_artifacts, active_catalog, cfg)),
+        ("subsamples", partial(_stage_subsamples, active_catalog, cfg)),
+        ("descriptive_stats", partial(_stage_descriptive_stats, cfg, active_catalog)),
+        ("validate", partial(_stage_validate, cfg, active_catalog)),
+    ]
+    for stage_name, run_stage in tqdm(
+        stages,
+        desc="Datasets pipeline",
+        unit="stage",
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    ):
+        LOGGER.info("Stage start: %s (%d datasets)", stage_name, n_ds)
+        run_stage()
+        LOGGER.info("Stage done: %s", stage_name)
+
     LOGGER.info("Datasets pipeline finished successfully")
 
 
@@ -249,4 +259,11 @@ def _stage_validate(settings: DatasetSettings, catalog: DatasetCatalog) -> None:
 
 def _progress[ItemT](items: Iterable[ItemT], description: str) -> Iterator[ItemT]:
     """Wrap iterable with tqdm progress bar."""
-    return tqdm(items, desc=description, unit="dataset", leave=False)
+    return tqdm(
+        items,
+        desc=description,
+        unit="dataset",
+        leave=False,
+        dynamic_ncols=True,
+        mininterval=0.3,
+    )

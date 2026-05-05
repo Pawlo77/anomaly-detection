@@ -96,7 +96,12 @@ def validate_canonical_artifacts(
 
 
 def write_validation_report(rows: list[ValidationRow], output_path: Path) -> None:
-    """Write validation rows to CSV file."""
+    """Persist ``ValidationRow`` records as a flat CSV ledger.
+
+    Args:
+        rows: Per-dataset QA conclusions produced during validation scans.
+        output_path: Target CSV path ensuring parent folders exist beforehand.
+    """
     table = pd.DataFrame(
         [
             {

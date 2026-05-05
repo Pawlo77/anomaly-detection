@@ -6,7 +6,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, PositiveInt
 
 SourceType = Literal["requests"]
-"""Supported upstream source type."""
 
 
 N2_CAPPED_DATASETS: set[str] = {"cover", "http", "smtp", "shuttle"}
@@ -50,7 +49,7 @@ ODDS_DATASET_URLS: dict[str, str] = {
     "wbc": f"{ADBENCH_BASE_URL}/42_WBC.npz",
     "wine": f"{ADBENCH_BASE_URL}/45_wine.npz",
 }
-"""Verified ODDS mirror URLs."""
+"""Dataset-specific source URLs for ODDS-style datasets."""
 
 GAGOLEWSKI_DATASET_IDS: set[str] = {
     "wut/smile",
@@ -96,7 +95,20 @@ def _spec(
     expected_dim: int,
     contamination: float,
 ) -> DatasetSpec:
-    """Build strongly typed dataset spec row."""
+    """Construct ``DatasetSpec`` rows mirroring mirrored upstream assets.
+
+    Args:
+        dataset_id: Public slug used everywhere in loaders and manifests.
+        expected_rows: Reference cardinality for QA ratio checks post ingest.
+        expected_dim: Nominal numeric feature breadth prior to preprocessing.
+        contamination: Annotated anomaly prevalence for benchmarking context.
+
+    Returns:
+        Hydrated pydantic specification including download routing metadata.
+
+    Raises:
+        ValueError: When neither ODDS nor Gagolewski mirrors know the slug.
+    """
     if dataset_id in ODDS_DATASET_URLS:
         source_ref = ODDS_DATASET_URLS[dataset_id]
     elif dataset_id in GAGOLEWSKI_DATASET_IDS:
@@ -139,7 +151,7 @@ FULL_DATASET_SPECS: tuple[DatasetSpec, ...] = (
     _spec("thyroid", 3772, 6, 0.025),
     _spec("vertebral", 240, 6, 0.125),
     _spec("vowels", 1456, 12, 0.034),
-    _spec("wbc", 223, 9, 0.056),
+    _spec("wbc", 223, 9, 0.04484304932735426),
     _spec("wine", 129, 13, 0.078),
     _spec("wut/smile", 1000, 2, 0.0),
     _spec("wut/circles", 4000, 2, 0.0),
@@ -151,19 +163,23 @@ FULL_DATASET_SPECS: tuple[DatasetSpec, ...] = (
     _spec("sipu/flame", 240, 2, 12.0 / 240.0),
     _spec("sipu/spiral", 312, 2, 0.0),
     _spec("fcps/lsun", 400, 2, 0.0),
-    _spec("graves/fuzzyx", 600, 2, 0.0),
+    _spec("graves/fuzzyx", 1000, 2, 0.0),
 )
 """Complete dataset list from plan document."""
 
 
 @dataclass(frozen=True, slots=True)
 class DatasetCatalog:
-    """Catalog wrapper exposing validated dataset specs."""
+    """Catalog wrapper exposing validated dataset specs.
+
+    Attributes:
+        specs: Immutable tuple of all supported ``DatasetSpec`` instances.
+    """
 
     specs: tuple[DatasetSpec, ...]
 
     def ids(self) -> list[str]:
-        """Return all dataset identifiers."""
+        """Return dataset identifiers in manifest declaration order."""
         return [spec.dataset_id for spec in self.specs]
 
     def get(self, dataset_id: str) -> DatasetSpec:
@@ -185,5 +201,9 @@ class DatasetCatalog:
 
 
 def build_default_catalog() -> DatasetCatalog:
-    """Build default catalog object."""
+    """Instantiate the frozen production catalog listing every planned dataset.
+
+    Returns:
+        ``DatasetCatalog`` wrapping ``FULL_DATASET_SPECS``.
+    """
     return DatasetCatalog(specs=FULL_DATASET_SPECS)

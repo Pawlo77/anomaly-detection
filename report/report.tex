@@ -8,8 +8,9 @@
 \usepackage{multirow}
 \usepackage{booktabs}
 \usepackage{longtable}
+\usepackage{stfloats}
 
-\title{TITLE}
+\title{Unsupervised Outlier Detection: Performance, Robustness, and Calibration}
 
 \author[affiliation={1}]{Paweł}{Pozorski}
 
@@ -19,37 +20,47 @@
 
 \email{pawel.pozorski.stud@pw.edu.pl}
 
-\keywords{KEYWORDS}
+\keywords{Anomaly detection, unsupervised learning, outlier detection, robustness analysis, hyperparameter sensitivity, benchmark evaluation}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-ABSTRACT
+This report evaluates six unsupervised outlier detection methods---One-Class SVM, Isolation Forest, Local Outlier Factor, DBSCAN, ECOD, and HBOS---on a heterogeneous corpus of 37 datasets (ODDS tabular benchmarks plus selected 2D geometric datasets). The study compares methods under a unified preprocessing and evaluation protocol, with labels reserved strictly for evaluation. Beyond point performance, it analyzes seed stability, hyperparameter sensitivity, method redundancy, and contamination-calibration behavior.
+
+Results show no universal winner. Within the engineered/non-PCA-capable family, Isolation Forest has the strongest aggregate profile, while within the PCA-95 local family DBSCAN exceeds LOF on thresholded metrics. Variance decomposition suggests that cross-dataset heterogeneity dominates seed-level noise. Correlation and dimensional structure remain relevant stressors, and rank-correlation analysis confirms partial redundancy alongside useful complementarity between local and global methods. Elbow-based contamination estimates are informative as initialization but show systematic underestimation on high-contamination datasets. A final verification task on unlabeled \texttt{test\_data.csv} uses a rank-based ensemble to produce binary labels.
 \end{abstract}
+
+\section{Introduction}
+
+Outlier detection is routinely deployed in settings where anomaly labels are scarce or unavailable at training time. In these conditions, method selection is difficult: detector performance often depends not only on nominal metric quality but also on data geometry, contamination regime, and sensitivity to hyperparameters. Consequently, practical use requires more than reporting a single leaderboard.
+
+This project investigates unsupervised anomaly detection under a broad, intentionally heterogeneous benchmark. The goals are fourfold: (i) compare core detector families under a shared protocol, (ii) identify hyperparameters that materially affect performance, (iii) analyze robustness and failure modes across dataset characteristics, and (iv) validate a deployable strategy for labeling an unlabeled test set.
+
+The report combines quantitative benchmarking with qualitative geometric diagnostics on 2D datasets. It also includes method-redundancy and contamination-calibration analyses to support practical decisions about ensembling and thresholding. The remainder of the paper is structured as follows: Section~\ref{sec:datasets} describes the corpus and preprocessing, Section~\ref{sec:experiments} details the experimental design, Section~\ref{sec:evaluation} defines metrics and robustness reporting, Section~\ref{sec:results} presents empirical findings, and Section~\ref{sec:discussion} summarizes practical implications.
 
 \section{Models}
 
-The detector suite is chosen to probe distinct failure modes rather than to maximize benchmark score alone. It targets contamination-prior sensitivity, dimensionality stress and distance concentration, local versus global anomaly structure, and dependence on marginal-independence assumptions. The resulting mix covers boundary learning, random isolation, local density ratio estimation, density-connectivity clustering, and marginal distribution scoring, which makes it possible to attribute performance changes to the underlying mechanism of each detector under a shared preprocessing and evaluation protocol.
+The detector suite is designed to probe complementary failure modes rather than to optimize a single benchmark score. It spans boundary learning, random isolation, local density contrast, density-connectivity clustering, and marginal distribution scoring. This diversity supports mechanism-level interpretation under a common preprocessing and evaluation protocol.
 
 \begin{description}
-    \item[OCSVM] OCSVM is the boundary-based baseline. In its RBF (Radial Basis Function) form, it implicitly maps the normal training data into a high-dimensional space and attempts to draw a tight, flexible "envelope" or boundary around it, separating the normal data from the origin. The hyperparameter \texttt{nu} controls the strictness of this envelope by dictating the maximum allowed fraction of training points that can fall outside of it (acting as errors or anomalies). Intuitively, if a new point falls outside this learned boundary, it is flagged as an anomaly \cite{scholkopf2001support}.
+    \item[OCSVM] OCSVM is the boundary-based baseline. With an RBF kernel, it learns a flexible boundary around nominal observations in feature space. The hyperparameter \texttt{nu} controls boundary strictness through the upper bound on training errors/outlier fraction. Points outside the boundary are classified as anomalous \cite{scholkopf2001support}.
 
-    \item[IForest] IForest represents partition-based detection. It works on the premise that anomalies are "few and different." The algorithm builds a forest of random decision trees by randomly selecting a feature and a random split value between the maximum and minimum values of that feature. Because anomalies are sparse and far from normal data clusters, it takes very few random splits to isolate an anomaly into its own leaf node. Conversely, normal points are densely packed and require many more splits to be isolated. The shorter the average path length from the root to the leaf, the more anomalous the point \cite{liu2008isolation}.
+    \item[IForest] IForest is the partition-based baseline. It isolates points through random recursive splits; sparse and atypical points are separated with shorter path lengths than dense nominal regions. The average isolation depth is therefore used as an anomaly signal \cite{liu2008isolation}.
 
-    \item[LOF] LOF captures local anomaly structure by comparing a point's local density with that of its neighbors. Unlike global methods that look at the entire dataset at once, LOF recognizes that datasets often have clusters of varying densities. It calculates the density around a specific point and compares it to the average density of its $k$-nearest neighbors. If a point has a significantly lower density than its neighbors, it means it is relatively isolated \emph{for its specific neighborhood}, even if it isn't the furthest point globally. This makes LOF highly sensitive to subtle, local deviations \cite{breunig2000lof}.
+    \item[LOF] LOF captures local anomaly structure by comparing each point's local density to that of its \(k\)-nearest neighbors. Points with substantially lower local density than their neighborhood receive higher outlier scores, making LOF sensitive to local deviations in heterogeneous-density data \cite{breunig2000lof}.
 
-    \item[DBSCAN] DBSCAN uses density connectivity to separate clusters from noise. It groups together points that are closely packed together (i.e., having a minimum number of neighbors within a specific radius, $\epsilon$). Points that sit in low-density regions and cannot be reached from any dense cluster are simply left out in the cold. Instead of assigning an anomaly score on a sliding scale, DBSCAN provides a stark binary contrast: a point is either part of a dense, connected component (normal) or it is labeled as unclustered "noise" (an outlier) \cite{ester1996dbscan}.
+    \item[DBSCAN] DBSCAN separates dense connected regions from noise via \(\epsilon\)-neighborhood density connectivity. Points not reachable from any dense component are labeled as noise. In this setting, DBSCAN provides binary outlier assignments rather than continuous anomaly scores \cite{ester1996dbscan}; ROC-AUC and PR-AUC are therefore degenerate single-point areas rather than full threshold-swept curves.
 
-    \item[ECOD] ECOD is the marginal-distribution baseline. It looks at the dataset one feature at a time, calculating the Empirical Cumulative Distribution Function (CDF) for each. Intuitively, it asks: "What is the probability of seeing a value this extreme, or more extreme, in this specific feature?" It then aggregates these probabilities (the "tail evidence") across all dimensions for a given point. Because it looks at features independently and relies on empirical probabilities rather than assuming the data fits a specific shape (like a bell curve), it serves as a highly efficient, parameter-light reference model \cite{li2022ecod}.
+    \item[ECOD] ECOD is the marginal-distribution baseline. It estimates empirical tail extremeness per feature through CDF-based ranks and aggregates this evidence across dimensions. Because it avoids parametric distribution assumptions and uses few hyperparameters, it serves as an efficient reference model \cite{li2022ecod}.
 
-    \item[HBOS] HBOS also relies on marginal (feature-wise) evidence, but instead of using the continuous CDF like ECOD, it builds discrete histograms for each feature. To score a point, HBOS checks which histogram bin the point's value falls into for every feature. If a point frequently falls into very short bins (meaning very few other data points share that value), it accumulates a high anomaly score. Because it relies on histograms, it is exceptionally fast, but its accuracy is highly sensitive to how you define the bins (e.g., bin width and the number of bins) \cite{goldstein2012hbos}.
+    \item[HBOS] HBOS also uses feature-wise marginal evidence, but via discretized histograms instead of continuous CDF tails. Observations that repeatedly fall into low-density bins receive higher anomaly scores. The method is computationally light, with performance governed mainly by binning choices \cite{goldstein2012hbos}.
 \end{description}
 
-\noindent Table~\ref{tab:model-grids} lists the hyperparameter axes and candidate values for each detector.\footnote{\texttt{n\_runs} is the Cartesian size when unconditional axes are combined (\(\prod\) list lengths). One-class SVM mixes kernel-dependent parameters, so only valid library configurations are materialised rather than a naive full product. Section~\ref{sec:experiments} explains which parts of this space enter the primary benchmark and which enter the focused studies.}
+\noindent Table~\ref{tab:model-grids} lists the hyperparameter axes and candidate values for each detector. \footnote{\texttt{n\_runs} is the Cartesian size when unconditional axes are combined (\(\prod\) list lengths). One-class SVM mixes kernel-dependent parameters, so only valid library configurations are materialised rather than a naive full product. Section~\ref{sec:experiments} explains which parts of this space enter the primary benchmark and which enter the focused studies.}
 
-\begin{table*}[hp]
+\begin{table*}[!ht]
 \centering
 \small
 \caption{Hyperparameter axes by model; \texttt{n\_runs} is the Cartesian axis count.}
@@ -179,9 +190,9 @@ ECOD
 
 \subsection{Dataset Sources and Composition}
 
-The benchmark corpus combines tabular anomaly detection datasets from the ODDS library \cite{rayana2016odds} with selected two-dimensional datasets from the Gagolewski clustering suite \cite{gagolewski2022clustering}. All datasets are standardized into a common schema with feature matrix \(X \in \mathbb{R}^{n \times d}\) and binary label vector \(y \in \{0, 1\}^n\), where \(1\) denotes an anomalous observation. The corpus contains 37 datasets, spanning 1{,}086{,}545 total observations, with sizes ranging from \(n=120\) to \(n=567{,}498\), dimensionality from \(d=2\) to \(d=400\), and natural contamination rates from \(0.0\%\) to \(\approx 35.9\%\) (canonical label incidence in Appendix~A).
+The benchmark corpus combines tabular anomaly detection datasets from ODDS \cite{rayana2016odds} with selected two-dimensional datasets from the Gagolewski clustering suite \cite{gagolewski2022clustering}. All data are standardized to a common schema with feature matrix \(X \in \mathbb{R}^{n \times d}\) and binary label vector \(y \in \{0, 1\}^n\), where \(1\) denotes an anomaly. The corpus contains 37 datasets and 1{,}086{,}545 observations, with \(n \in [120, 567{,}498]\), \(d \in [2, 400]\), and natural contamination rates from \(0.0\%\) to \(\approx 35.9\%\) (Appendix~A). Nine datasets have zero labeled outliers and are retained as a visual-only cohort.
 
-The ODDS subset comprises 26 multidimensional tabular datasets, most available via the ADBench mirror \cite{rayana2016odds}. The 2D subset comprises 11 datasets from Gagolewski et al.\ (v1.1.0), selected to expose solver sensitivity to geometric structure (concentric rings, interleaved curves, sparse neighborhoods, and boundary ambiguity).
+The ODDS subset contains 26 multidimensional tabular datasets (via the ADBench mirror where needed \cite{rayana2016odds}). The 2D subset contains 11 Gagolewski datasets (v1.1.0), selected to stress geometric effects such as rings, interleaved curves, sparse neighborhoods, and ambiguous boundaries.
 
 \subsection{Corpus Design Rationale}
 
@@ -196,36 +207,42 @@ The corpus is intentionally heterogeneous to expose distinct detector failure mo
 
 \subsection{Data Acquisition and Preprocessing}
 
-Dataset acquisition and preprocessing follow a uniform reproducible protocol:
+Dataset acquisition and preprocessing follow a uniform protocol:
 
 \begin{description}
-    \item[Download and validation] Raw artifacts are downloaded from verified public sources (ADBench mirrors for ODDS; official GitHub release for Gagolewski v1.1.0). Each dataset is validated against expected row count, feature count, and contamination rate.
-    \item[Canonicalization] All datasets are converted to a common tabular format (CSV or NumPy) with explicit binary labels. Missing values are documented and, for \texttt{arrhythmia}, imputed using an iterative procedure (see below).
-    \item[Default preprocessing] All datasets (except those with dedicated pipelines) are preprocessed with robust scaling (median center, IQR normalize) applied only to numeric features. This preserves low-d interpretability while reducing outlier influence on scale estimates.
-    \item[Arrhythmia-specific preprocessing] Archival arrhythmia documentation cites \(\sim\)0.33\% incomplete entries (nominals mixed with continuous ECG signals); the ODDS-style mirror canonicalised here does not leave those artefacts as CSV-level pandas \texttt{NaN}s, hence Appendix~A reports a \(0\) missing fraction. Preprocessing branches still execute iterative Bayesian Ridge imputation on any latent gaps surfaced during engineering. Steps are (1)~imputation plus encoding pipeline (10 imputer iterations where needed), (2)~one-hot encoding, and (3)~a high-dimensional encoded view alongside PCA-95. In the main benchmark, LOF and DBSCAN use the PCA-95 view only, while IForest, OCSVM, ECOD, and HBOS also see the engineered path (paired tasks also add PCA-95 for everyone).
+    \item[Download and validation] Raw artifacts are downloaded from verified public sources (ADBench mirrors for ODDS; official GitHub release for Gagolewski v1.1.0). Each dataset is checked against expected row count, feature count, and contamination.
+    \item[Canonicalization] All datasets are converted to a common tabular format (CSV or NumPy) with explicit binary labels. Missingness is documented; \texttt{arrhythmia} uses a dedicated iterative treatment (below).
+    \item[Default preprocessing] Unless a dedicated pipeline is defined, numeric features are robust-scaled (median centering and IQR normalization). This reduces outlier leverage in scale estimation while preserving low-dimensional interpretability.
+    \item[Arrhythmia-specific preprocessing] In the data actually used for this study, the ODDS-style \texttt{arrhythmia} table has no CSV-level pandas \texttt{NaN}s (Appendix~A missing fraction \(=0\)). Therefore, imputation is inactive for this dataset in all reported runs. The pipeline then applies one-hot encoding and keeps both an engineered high-dimensional view and a PCA-95 view. The \(95\%\) retained-variance target follows standard PCA retention practice \cite{jolliffe2002pca}. In the main benchmark, LOF and DBSCAN use PCA-95 only; IForest, OCSVM, ECOD, and HBOS also use the engineered view.
 \end{description}
 
 \subsection{Algorithm-Specific Subsampling}
 
-Computational cost varies widely across algorithms. To ensure tractability while maintaining methodological integrity, the following protocol is applied:
+Computational cost varies substantially across algorithms. To keep runs tractable, I apply:
 
 \begin{description}
-    \item[No subsampling] IForest, ECOD, and HBOS run on full dataset due to their favorable time complexity ($O(n \log n)$ or $O(nd \log n)$). Running on full data for these methods is itself a contribution, demonstrating industrial-grade scalability.
-    \item[Stratified subsampling] OCSVM, LOF, and DBSCAN (all quadratic or worse) are capped at n=20{,}000 observations when the full dataset exceeds this size. Stratified random sampling preserves the contamination ratio. This cap applies to four datasets: \texttt{cover}, \texttt{http}, \texttt{smtp}, and \texttt{shuttle}.
+    \item[No subsampling] IForest, ECOD, and HBOS run on full datasets due to favorable scaling (\(O(n \log n)\) or \(O(nd \log n)\)).
+    \item[Stratified subsampling] OCSVM, LOF, and DBSCAN (quadratic or worse in common settings) are capped at \(n=20{,}000\) when the full dataset is larger. Stratified sampling preserves contamination while keeping runtime and memory feasible on very large datasets. This affects \texttt{cover}, \texttt{http}, \texttt{smtp}, and \texttt{shuttle}.
 \end{description}
 
-\noindent Crucially, anomaly labels are reserved for evaluation only and never enter the fitting or hyperparameter-selection pipeline. This ensures a faithful unsupervised protocol. Detailed corpus-level and per-dataset descriptive statistics are reported in Appendix~A.
+\noindent Anomaly labels are used for evaluation only and never for fitting or hyperparameter selection. For quantitative ranking and aggregate metric summaries, I evaluate only the 28 datasets with at least one labeled outlier; the 9 zero-outlier datasets are excluded from thresholded and positive-class metrics and used only for qualitative geometry visualizations.
+
+\begin{description}
+    \item[Preprocessing comparability caveat.] Local methods (LOF, DBSCAN) are evaluated on PCA-95 representations, while IForest, OCSVM, ECOD, and HBOS also use engineered non-PCA views in the benchmark pool. Cross-family comparisons should therefore be interpreted as benchmark-level evidence under mixed preprocessing rather than strict feature-parity comparisons.
+\end{description}
+
+\noindent Detailed corpus-level and per-dataset statistics are provided in Appendix~A.
 
 \section{Experiments}
 \label{sec:experiments}
 
-This section states the experimental plan in plain terms. The hyperparameter grid in Table~\ref{tab:model-grids} defines what we \emph{could} vary; the runs below describe what we \emph{actually} run, and why.
+Table~\ref{tab:model-grids} defines the full candidate hyperparameter space. The runs below specify the executed protocol.
 
 \subsection{Two layers: benchmark and deep dives}
 
-The study has two layers. The \textbf{primary benchmark} fits each detector once per dataset with a single unsupervised default (no labels for model selection). Defaults are chosen to match common library prescriptions: Isolation Forest with a medium-sized ensemble and fixed subsample cap, LOF with a moderate neighbour count, DBSCAN with a knee-estimated neighbourhood radius, RBF one-class SVM with a moderate \(\nu\), and library defaults for ECOD and HBOS. This layer answers: ``how do these methods behave off the shelf?'' Stratified subsampling for the slower detectors, when \(n\) exceeds the cap, is fixed in Section~\ref{sec:datasets}.
+The study has two layers. The \textbf{primary benchmark} fits each detector once per dataset with one unsupervised default configuration (no labels for model selection). Defaults follow common library practice: IForest with a medium ensemble and fixed subsample cap, LOF with moderate neighborhood size, DBSCAN with knee-estimated radius \cite{satopaa2011kneedle}, RBF OCSVM with moderate \(\nu\), and library defaults for ECOD/HBOS. Stratified subsampling for slower detectors at large \(n\) is defined in Section~\ref{sec:datasets}.
 
-The \textbf{focused studies} widen selected knobs only where the corpus is likely to reveal something about robustness---geometry for local methods, neighbourhoods for clustering, contamination priors for tail models---and repeat each setting with five random seeds \(\{0,1,2,3,42\}\) so reported spread reflects optimisation noise, not one-off luck. These studies do \emph{not} brute-force every cell of Table~\ref{tab:model-grids} on every benchmark; that table is intentionally large so that Section~\ref{sec:evaluation} and the appendix can cite consistent axis definitions.
+The \textbf{focused studies} expand selected hyperparameters in regimes expected to expose robustness effects (geometry for local methods, neighborhoods for clustering, contamination priors for tail models). Settings are repeated with five seeds \(\{0,1,2,3,42\}\) to estimate variability. I do not exhaustively evaluate every cell of Table~\ref{tab:model-grids} on every dataset.
 
 \subsection{Focused hyperparameter sweeps}
 
@@ -243,36 +260,395 @@ The \textbf{focused studies} widen selected knobs only where the corpus is likel
 
 \subsection{Sensitivity to hyperparameters (variance-based)}
 
-We estimate first-order Sobol indices for PR-AUC using a Saltelli-style quasi-random scheme with \(N_{\text{saltelli}}=28\) base draws per dataset--model pair. Isolation Forest is analysed on \texttt{ionosphere}, \texttt{breastw}, and \texttt{smtp}; RBF one-class SVM on \texttt{breastw}, \texttt{ionosphere}, and \texttt{pima}. In parallel, eighty Latin Hypercube draws explore \(\nu\) and \(\gamma\) pairs from the categorical RBF core on the same three SVM probe datasets---a complementary view that does not require treating \(\gamma\) as a continuous surrogate.
+I estimate first-order Sobol indices for PR-AUC using a Saltelli-style quasi-random scheme with \(N_{\text{saltelli}}=28\) base draws per dataset--model pair. Isolation Forest is analysed on \texttt{ionosphere}, \texttt{breastw}, and \texttt{smtp}; RBF one-class SVM on \texttt{breastw}, \texttt{ionosphere}, and \texttt{pima}. In parallel, eighty Latin Hypercube draws explore \(\nu\) and \(\gamma\) pairs from the categorical RBF core on the same three SVM probe datasets---a complementary view that does not require treating \(\gamma\) as a continuous surrogate. Given this sample budget, Sobol summaries are interpreted as indicative and aligned with the evaluation-variance caution emphasized by Campos et al. \cite{campos2016evaluation}.
+
+\noindent\textbf{Scope distinction.} True Sobol indices (with bootstrap confidence intervals) are reported only for IForest and OCSVM (Fig.~\ref{fig:results-sobol-ci}). For LOF, DBSCAN, ECOD, and HBOS, Fig.~\ref{fig:results-param-importance} reports permutation importance from random-forest surrogates fitted to run-level sweeps; these are surrogate-based sensitivity proxies, not Sobol decompositions.
 
 \subsection{Oracle sweep and bootstrap stability}
 
 As a retrospective upper bound on RBF one-class SVM tuning, every \(\nu{\times}\gamma\) pair from the categorical RBF grid is evaluated on \texttt{ionosphere} with five seeds (210 pooled fits total).
 
-Isolation Forest stability on \texttt{thyroid}: forty-eight hyperparameter tuples are picked deterministically from a dense Cartesian surrogate; each tuple receives ten stratified bootstrap replicates that retain roughly \(90\%\) of points. We favour tuples with high mean PR-AUC among replicates whose bootstrap standard deviation \(\sigma_{\mathrm{boot}}\) stays at or below \(0.03\); if none qualify, we keep the strongest mean-score candidate regardless.
+Isolation Forest stability on \texttt{thyroid}: forty-eight hyperparameter tuples are picked deterministically from a dense Cartesian surrogate; each tuple receives ten stratified bootstrap replicates that retain roughly \(90\%\) of points. I favour tuples with high mean PR-AUC among replicates whose bootstrap standard deviation \(\sigma_{\mathrm{boot}}\) stays at or below \(0.03\); if none qualify, I keep the strongest mean-score candidate regardless.
 
 \section{Evaluation Methodology}
 \label{sec:evaluation}
 
-The evaluation protocol separates pointwise performance reporting from robustness analysis. Metrics summarize classification quality and ranking quality under a fixed contamination threshold, while sensitivity analysis measures how much performance changes under hyperparameter variation and resampling.
+The evaluation protocol separates pointwise performance from robustness analysis. Metrics summarize thresholded classification and ranking quality under a fixed contamination rule; sensitivity analyses quantify variation under hyperparameter changes and resampling.
 
 \subsection{Metrics}
 
-All metrics are computed at the natural contamination threshold, so each method labels exactly the expected fraction of points as outliers. This keeps threshold selection fixed across datasets and makes the comparison directly about score quality rather than post-processing.
+All thresholded metrics use the natural contamination cut, so each method predicts the expected outlier fraction for that dataset. This keeps thresholding fixed across methods and shifts comparison to score quality rather than post-hoc calibration.
 
 \begin{description}
-    \item[Accuracy] retained as a baseline summary, but interpreted cautiously because it can be dominated by the majority class under extreme imbalance.
-    \item[Precision] measures the fraction of predicted outliers that are truly anomalous, which is useful when false positives are costly.
-    \item[Recall] measures how many true outliers are recovered, which is important when missing anomalies is expensive.
-    \item[ROC-AUC] evaluates ranking quality independently of class prevalence, so it is useful for cross-dataset comparison.
-    \item[PR-AUC] emphasizes performance on the positive class and is therefore more informative than ROC-AUC under heavy imbalance.
-    \item[MCC] summarizes all four confusion-matrix cells in a single balanced score, which makes it robust under skewed labels.
-    \item[F1] combines precision and recall into a single thresholded score at the natural contamination cut.
+    \item[Oracle-threshold caveat.] The natural contamination cut is label-informed and should be interpreted as an oracle-assisted analysis setting rather than a deploy-time unsupervised operating point. I therefore foreground threshold-independent metrics (ROC-AUC, PR-AUC) in cross-method comparisons and use thresholded metrics as conditional diagnostics under known class prevalence.
+
+        Oracle-threshold metrics are not used as the primary basis for cross-method ranking claims; they are optimistic diagnostics under known prevalence, not deploy-time operating-point evidence.
+
+    \item[Contamination-parameter semantics.] In IForest, LOF, ECOD, and HBOS, the \texttt{contamination} parameter changes only the decision cutoff on already-computed anomaly scores; it does not alter the score-generation mechanism itself. In contrast, for OCSVM, \(\nu\) shapes the learned support boundary (model fit) and also influences the implied outlier fraction. I therefore interpret OCSVM \(\nu\)-sensitivity as model-behavior sensitivity, while contamination sweeps for the other families are interpreted primarily as threshold-calibration sensitivity.
+\end{description}
+
+\noindent Under the natural contamination cut, the number of predicted positives equals the number of true positives by construction; therefore precision and recall are numerically identical, and \(F1\) is identical as well. To avoid redundant reporting, the main tables retain recall only among \{precision, recall, F1\}.
+
+As a sensitivity check, I also evaluate thresholded metrics using elbow-estimated contamination rates (same score vectors, dataset-specific estimated prevalence). Relative to oracle thresholds on the matched 28-dataset subset (Table~\ref{tab:metrics-estimated-vs-oracle}), recall decreases across all methods, confirming that oracle-threshold metrics are optimistic for deployment calibration. In downstream interpretation, this estimated-threshold view is treated as the primary thresholded reference, while oracle-threshold tables are retained as supplementary diagnostics.
+
+\begin{description}
+    \item[Accuracy] is the fraction of correct labels, \(\frac{TP+TN}{TP+TN+FP+FN}\). I retain it as a baseline summary, but interpret it cautiously because it can be dominated by the majority class under extreme imbalance.
+    \item[Precision] is \(\frac{TP}{TP+FP}\): among predicted outliers, the proportion that are true outliers. High precision means few false alarms.
+    \item[Recall] is \(\frac{TP}{TP+FN}\): the fraction of true outliers recovered. This is important when missing anomalies is expensive.
+    \item[F1] is the harmonic mean of precision and recall, \(F1=\frac{2PR}{P+R}\). It balances missed anomalies and false alarms in one thresholded score.
+    \item[ROC-AUC] is the area under the ROC curve (TPR vs FPR over thresholds), where \(\mathrm{TPR}=\frac{TP}{TP+FN}\) and \(\mathrm{FPR}=\frac{FP}{FP+TN}\). It evaluates ranking quality independently of class prevalence, so it is useful for cross-dataset comparison (except for DBSCAN, where binary outputs induce a degenerate single-point area).
+    \item[PR-AUC] is the area under the precision-recall curve, where precision \(=\frac{TP}{TP+FP}\) and recall \(=\frac{TP}{TP+FN}\) are traced over score thresholds. Intuitively, it measures how well a method retrieves true anomalies while limiting false alarms. Because anomalies are rare in this benchmark, PR-AUC is often more informative than ROC-AUC for practical ranking (with the same DBSCAN degeneracy caveat).
+    \item[MCC] (Matthews correlation coefficient) is a single-score summary of the confusion matrix:
+    \[
+    \resizebox{0.96\columnwidth}{!}{$
+    \mathrm{MCC}=\frac{TP\cdot TN-FP\cdot FN}
+    {\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}
+    $}
+    \]
+    MCC ranges from \(-1\) (total disagreement) through \(0\) (chance-level) to \(1\) (perfect agreement), so it remains interpretable under strong class imbalance where accuracy can be misleading.
 \end{description}
 
 \subsection{Sensitivity and robustness reporting}
 
-Robustness summaries accompany the main metrics. They address (i)~how much PR-AUC moves under reasonable hyperparameter changes, and (ii)~how stable scores are under bootstrap resampling. All schedules are in Section~\ref{sec:experiments}; for reproducibility the primary defaults are Isolation Forest ensemble size \(200\) with \(\texttt{max\_samples}=256\) and bootstrap off, LOF with \(20\) neighbours, DBSCAN knee \(\epsilon\) with \(\texttt{min\_samples}=5\), RBF one-class SVM with \(\nu=0.1\), and library defaults for ECOD and HBOS. Anomaly labels are used for evaluation only and never to pick hyperparameters.
+Robustness summaries accompany the main metrics and quantify (i) PR-AUC movement under controlled hyperparameter changes and (ii) score stability under bootstrap resampling. Schedules are listed in Section~\ref{sec:experiments}. For reproducibility, primary defaults are IForest (\(n_{\text{estimators}}=200\), \(\texttt{max\_samples}=256\), bootstrap off), LOF (\(k=20\)), DBSCAN (knee \(\epsilon\), \(\texttt{min\_samples}=5\)), RBF OCSVM (\(\nu=0.1\)), and library defaults for ECOD/HBOS. Labels are never used for hyperparameter selection.
+
+\section{Results}
+\label{sec:results}
+
+This section reports the main empirical patterns without overinterpreting aggregate plots. Unless noted otherwise, summaries use per-dataset medians across benchmark runs, with seed repeats and tested variants pooled.
+
+\subsection{Within-family performance summary}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/topology_pr_auc_distribution.png}
+\caption{PR-AUC distribution across pooled benchmark runs (including seed repeats and tested variants) for the engineered/non-PCA-capable family only (OCSVM, IForest, ECOD, HBOS) on the quantitative cohort. LOF and DBSCAN are excluded because they were evaluated on PCA-95-only representations and are summarized separately in Table~\ref{tab:metrics-summary-pca-local}.}
+\label{fig:results-prauc-dist}
+\end{figure}
+
+The pooled PR-AUC distribution in Fig.~\ref{fig:results-prauc-dist} is shown only for the engineered/non-PCA-capable family to preserve feature parity inside the visual. LOF and DBSCAN are compared only against each other in the PCA-95 local-method family (Table~\ref{tab:metrics-summary-pca-local}), while OCSVM, IForest, ECOD, and HBOS are compared within the engineered/non-PCA-capable family (Table~\ref{tab:metrics-summary-engineered}).
+
+Within the PCA-95 local family, DBSCAN exceeds LOF on thresholded metrics (recall 0.321 vs 0.212; MCC 0.253 vs 0.133). DBSCAN AUC values are not compared because binary outputs do not define a full ranking curve. Within the engineered-capable family, IForest has the strongest aggregate profile (PR-AUC \(0.457\), MCC \(0.386\)), followed by ECOD and HBOS, with OCSVM competitive but lower on average PR-AUC and MCC.
+
+\begin{table*}[!ht]
+\centering
+\caption{Primary thresholded benchmark view (deployment-oriented, mixed-preprocessing/non-feature-parity): absolute mean metrics at elbow-estimated contamination thresholds on the matched 28-dataset subset. ROC-AUC and PR-AUC are threshold-independent and therefore unchanged by threshold calibration; they are repeated here for completeness.}
+\label{tab:metrics-estimated-absolute}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{l
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]}
+\toprule
+\textbf{Method} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{MCC} & \textbf{F1} & \textbf{ROC-AUC} & \textbf{PR-AUC} \\
+\midrule
+OCSVM   & \num{0.874} & \num{0.396} & \num{0.207} & \num{0.170} & \num{0.167} & \num{0.734} & \num{0.354} \\
+IForest & \num{0.882} & \num{0.472} & \num{0.270} & \num{0.249} & \num{0.239} & \num{0.818} & \num{0.457} \\
+LOF     & \num{0.875} & \num{0.236} & \num{0.208} & \num{0.118} & \num{0.129} & \num{0.668} & \num{0.228} \\
+DBSCAN  & \num{0.873} & \num{0.405} & \num{0.205} & \num{0.167} & \num{0.163} & \num{0.677} & \num{0.317} \\
+ECOD    & \num{0.879} & \num{0.392} & \num{0.249} & \num{0.203} & \num{0.200} & \num{0.776} & \num{0.396} \\
+HBOS    & \num{0.879} & \num{0.336} & \num{0.235} & \num{0.189} & \num{0.195} & \num{0.762} & \num{0.367} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[!ht]
+\centering
+\caption{Estimated-threshold sensitivity complement (mixed-preprocessing, non-feature-parity): mean metric delta (estimated contamination threshold minus oracle natural-contamination threshold) on the matched 28-dataset subset.}
+\label{tab:metrics-estimated-vs-oracle}
+\small
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{l
+                S[table-format=-1.3]
+                S[table-format=-1.3]
+                S[table-format=-1.3]
+                S[table-format=-1.3]
+                S[table-format=-1.3]
+                S[table-format=-1.3]}
+\toprule
+\textbf{Metric} & \textbf{OCSVM} & \textbf{IForest} & \textbf{LOF} & \textbf{DBSCAN} & \textbf{ECOD} & \textbf{HBOS} \\
+\midrule
+$\Delta$ Accuracy & \num{-0.016} & \num{-0.034} & \num{-0.001} & \num{-0.020} & \num{-0.025} & \num{-0.024} \\
+$\Delta$ Recall   & \num{-0.132} & \num{-0.169} & \num{-0.005} & \num{-0.115} & \num{-0.141} & \num{-0.125} \\
+$\Delta$ MCC      & \num{-0.098} & \num{-0.137} & \num{-0.015} & \num{-0.086} & \num{-0.126} & \num{-0.110} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{description}
+    \item[Supplementary Oracle-Threshold Diagnostics] The following oracle-threshold tables are retained for diagnostic calibration context only and are not used as primary deployment-facing performance evidence.
+
+    \item[Coverage note.] The quantitative cohort has 28 datasets with labeled outliers, and all 28 are included in Tables~\ref{tab:metrics-summary-pca-local}, \ref{tab:metrics-summary-engineered}, and \ref{tab:metrics-estimated-vs-oracle}. A prior export bug that skipped slash-delimited dataset identifiers (including \texttt{sipu/flame} and \texttt{wut/x2}) has been fixed in the phase-6 artifact pipeline.
+\end{description}
+
+\begin{table}[!ht]
+\centering
+\caption{Supplementary oracle-threshold diagnostic (PCA-95-only local methods): mean $\pm$ std metrics at natural-contamination thresholds on datasets with labeled outliers and available score vectors (\(n=28\)). Precision and F1 are omitted because they are identical to recall by construction under this thresholding rule. DBSCAN ROC-AUC/PR-AUC are listed as N/A because DBSCAN emits binary outputs and does not provide a comparable ranking curve.}
+\label{tab:metrics-summary-pca-local}
+\scriptsize
+\begin{tabularx}{\columnwidth}{l *{5}{>{\centering\arraybackslash}X}}
+\toprule
+\textbf{Method} & \textbf{Accuracy} & \textbf{Recall} & \textbf{ROC-AUC} & \textbf{PR-AUC} & \textbf{MCC} \\
+\midrule
+LOF & 0.876 $\pm$ 0.142 & 0.212 $\pm$ 0.204 & 0.668 $\pm$ 0.183 & 0.228 $\pm$ 0.218 & 0.133 $\pm$ 0.217 \\
+DBSCAN & 0.894 $\pm$ 0.123 & 0.321 $\pm$ 0.276 & N/A (binary output) & N/A (binary output) & 0.253 $\pm$ 0.292 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[!ht]
+\centering
+\caption{Supplementary oracle-threshold diagnostic (engineered/non-PCA-capable methods): mean $\pm$ std metrics at natural-contamination thresholds on datasets with labeled outliers and available score vectors (\(n=28\)).}
+\label{tab:metrics-summary-engineered}
+\scriptsize
+\begin{tabularx}{\columnwidth}{l *{4}{>{\centering\arraybackslash}X}}
+\toprule
+\textbf{Metric} & \textbf{OCSVM} & \textbf{IForest} & \textbf{ECOD} & \textbf{HBOS} \\
+\midrule
+Accuracy & 0.890 $\pm$ 0.121 & 0.915 $\pm$ 0.089 & 0.904 $\pm$ 0.106 & 0.903 $\pm$ 0.112 \\
+Recall & 0.339 $\pm$ 0.227 & 0.439 $\pm$ 0.336 & 0.390 $\pm$ 0.274 & 0.360 $\pm$ 0.310 \\
+ROC-AUC & 0.734 $\pm$ 0.192 & 0.818 $\pm$ 0.178 & 0.776 $\pm$ 0.207 & 0.762 $\pm$ 0.209 \\
+PR-AUC & 0.354 $\pm$ 0.227 & 0.457 $\pm$ 0.360 & 0.396 $\pm$ 0.291 & 0.367 $\pm$ 0.328 \\
+MCC & 0.268 $\pm$ 0.235 & 0.386 $\pm$ 0.347 & 0.329 $\pm$ 0.287 & 0.299 $\pm$ 0.324 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent MCC trends are directionally consistent with PR-AUC and ROC-AUC but add imbalance-aware perspective. Within the engineered-capable family, IForest has the strongest mean MCC (\(0.386\)), followed by ECOD (\(0.329\)) and HBOS (\(0.299\)); within the PCA-95 local family, DBSCAN exceeds LOF (0.253 vs 0.133). These values are interpreted within family only.
+
+For ranking interpretation, Table~\ref{tab:metrics-estimated-absolute} is the primary thresholded deployment-oriented view, while Table~\ref{tab:metrics-estimated-vs-oracle} provides sensitivity deltas. Tables~\ref{tab:metrics-summary-pca-local} and \ref{tab:metrics-summary-engineered} are supplementary oracle diagnostics only. All benchmark-level cross-family statements remain caveated as mixed-preprocessing, non-feature-parity evidence.
+
+\begin{table*}[!ht]
+\centering
+\caption{Supplementary preprocessing ablation (IForest, representative subset): engineered default view (\texttt{track-a-defaults}) versus high-variance PCA view (\texttt{pca-0.99}) on datasets where both were run with matched five-seed repeats. This table quantifies preprocessing sensitivity directly; signs and magnitudes show that representation choice can materially alter outcomes, so cross-family comparisons under mixed preprocessing are treated as non-parity evidence.}
+\label{tab:iforest-preprocess-ablation}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]
+                S[table-format=1.3]}
+\toprule
+\textbf{Dataset} & {\textbf{PR-AUC (Eng.)}} & {\textbf{PR-AUC (PCA)}} & {\(\Delta\) \textbf{PR-AUC}} & {\textbf{ROC-AUC (Eng.)}} & {\textbf{ROC-AUC (PCA)}} & {\(\Delta\) \textbf{ROC-AUC}} \\
+\midrule
+arrhythmia & \num{0.421} & \num{0.384} & \num{-0.037} & \num{0.789} & \num{0.780} & \num{-0.009} \\
+mnist      & \num{0.277} & \num{0.329} & \num{0.052}  & \num{0.808} & \num{0.817} & \num{0.010} \\
+musk       & \num{0.999} & \num{0.228} & \num{-0.771} & \num{1.000} & \num{0.904} & \num{-0.096} \\
+speech     & \num{0.023} & \num{0.019} & \num{-0.004} & \num{0.474} & \num{0.503} & \num{0.029} \\
+\midrule
+mean (subset) & \num{0.430} & \num{0.240} & \num{-0.190} & \num{0.768} & \num{0.751} & \num{-0.017} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Stability and robustness}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/topology_seed_fragility_heatmap.png}
+\caption{Seed fragility heatmap; each value is \(\mathrm{std}(\mathrm{PR\text{-}AUC})\) across seeds for one dataset--algorithm group.}
+\label{fig:results-seed-fragility}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/topology_seed_stability_bars.png}
+\caption{Algorithm-level seed stability summary; median seed std and median seed range are aggregated over dataset-level seed repeats.}
+\label{fig:results-seed-stability-bars}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q1_variance_decomposition.png}
+\caption{Variance decomposition separating between-dataset variability from within-dataset seed variability.}
+\label{fig:results-variance-decomp}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q2_iforest_vs_lof_dimensionality.png}
+\caption{Dimensional robustness contrast; points are per-dataset median PR-AUC values (all runs pooled), with trend lines for IForest and LOF.}
+\label{fig:results-q2-dim}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q3_ecod_lof_gap_vs_correlation.png}
+\caption{ECOD--LOF gap versus correlation; each point is one dataset, and the vertical axis is \(|\mathrm{PR\text{-}AUC}_{ECOD}-\mathrm{PR\text{-}AUC}_{LOF}|\) from per-dataset medians.}
+\label{fig:results-q3-corr}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q4_pr_auc_by_outlier_regime.png}
+\caption{ODDS tabular stratification by outlier regime (Campos-style local/cluster vs global/point grouping): per-dataset median PR-AUC distributions by algorithm and regime.}
+\label{fig:results-q4-regime}
+\end{figure}
+
+Two patterns are stable across robustness views (Figs.~\ref{fig:results-seed-fragility}--\ref{fig:results-q4-regime}). First, seed noise is small relative to dataset heterogeneity: for most methods, median seed-level \(\mathrm{std}(\mathrm{PR\text{-}AUC})\) is effectively \(0\), while between-dataset variation remains large. Second, structural covariates still matter. In this corpus, PR-AUC slope versus \(\log(d)\) is positive for all methods (associative trend only), and the absolute ECOD--LOF performance gap is positively associated with mean feature correlation (Pearson \(r\approx0.57\), 95\% CI \([0.30, 0.75]\); also associative). The positive dimensional slope is likely corpus-composition dependent rather than a universal claim, because several high-dimensional datasets also show low distance-concentration ratios that should penalize local distance-based methods. These are associative patterns, not causal claims.
+
+To directly quantify local-vs-global failure behavior on tabular datasets, I assign ODDS datasets to two outlier regimes (global/point-dominant vs local/cluster-dominant) using Campos-style taxonomy criteria and stratify PR-AUC by that axis (Fig.~\ref{fig:results-q4-regime}; Appendix~B mapping). This yields the expected contrast: LOF improves strongly on local/cluster-dominant datasets (mean PR-AUC \(0.272\) vs \(0.073\) on global/point), while IForest remains comparatively strong in both regimes (global/point \(0.494\), local/cluster \(0.417\)). DBSCAN and ECOD also show regime dependence, but with smaller separation than LOF.
+
+\subsection{Method redundancy and contamination estimation}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q4_kendall_tau_heatmap.png}
+\caption{Kendall rank-correlation matrix computed from aligned per-point rank scores across methods.}
+\label{fig:results-kendall}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q5_elbow_parity.png}
+\caption{Elbow contamination parity; elbow estimates are compared with known contamination rates on the same datasets.}
+\label{fig:results-elbow-parity}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q4_pairwise_tau_distribution.png}
+\caption{Pairwise Kendall distribution; each box summarizes dataset-wise Kendall \(\tau\) values for one algorithm pair.}
+\label{fig:results-kendall-distribution}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q5_elbow_residual_diagnostics.png}
+\caption{Elbow residual diagnostics; residual \(=\) estimated minus true contamination, plotted against contamination and dimensionality.}
+\label{fig:results-elbow-residuals}
+\end{figure}
+
+The redundancy analysis (Figs.~\ref{fig:results-kendall}--\ref{fig:results-kendall-distribution}) shows overlap but not interchangeability. The strongest pairwise agreement is IForest--ECOD (\(\tau\approx0.69\)); under a no-tie interpretation this corresponds to roughly \(84.5\%\) concordant rank pairs \((\tau+1)/2\). This indicates high agreement on this benchmark corpus, not universal method redundancy, because IForest (isolation-based, interaction-aware) and ECOD (marginal tail-based) encode different inductive biases and can diverge on datasets where interaction structure dominates. A secondary alignment is OCSVM--IForest (\(\tau\approx0.43\)), showing that boundary-based OCSVM is closer to global tree/rank detectors than to purely local neighborhood methods. LOF and DBSCAN remain comparatively weakly aligned with global methods (e.g., DBSCAN--IForest \(\tau\approx0.31\), DBSCAN--LOF \(\tau\approx0.22\)), which is the empirical basis for combining local and global detectors in ensembles. Consistent with outlier-ensemble guidance, I treat rank correlation as one diversity signal among several rather than a stand-alone redundancy criterion \cite{aggarwal2015outlierensembles}.
+
+For contamination estimation (Figs.~\ref{fig:results-elbow-parity}--\ref{fig:results-elbow-residuals}), elbow parity is mixed. Median absolute error is \(0.031\), but the mean absolute error rises to \(0.081\) due to a heavy tail, and residuals are negatively biased on average (\(-0.049\), underestimation). Elbow estimates are therefore useful as initialization, but not as a stand-alone calibration rule on high-contamination datasets.
+
+\subsection{2D geometry evidence}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/2d_compare_score_maps__wut__x2.png}
+\caption{All-model score maps on one 2D dataset with shared score scale, selected hyperparameters per model, and \(x\)-markers for predicted anomalies.}
+\label{fig:results-2d-allmodels}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/2d__wut__x2__IForest.png}
+\caption{Single-model 2D panel set (IForest on \texttt{wut/x2}) showing the raw map, score map, binary predictions, and PR curve.}
+\label{fig:results-2d-single}
+\end{figure}
+
+The 2D diagnostics (Figs.~\ref{fig:results-2d-allmodels}--\ref{fig:results-2d-single}) make detector behavior visually interpretable: local-density methods react to neighborhood structure, while marginal/global methods emphasize pointwise rarity. I treat these plots as qualitative mechanism checks that complement, rather than replace, the corpus-level metrics.
+
+\subsection{Hyperparameter importance}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/deepdive_param_importance_per_algorithm.png}
+\caption{Per-algorithm parameter importance from permutation analysis on random-forest surrogates fitted to run-level hyperparameter configurations. Surrogate fit (\(R^2\)) by method: OCSVM \(0.514\), IForest \(0.586\), LOF \(0.213\), DBSCAN \(0.348\), ECOD \(0.053\), HBOS \(0.273\). Importance bars for methods with \(R^2<0.2\) (ECOD) are treated as unreliable.}
+\label{fig:results-param-importance}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/deepdive_iforest_samples_estimators_heatmap.png}
+\caption{IForest hyperparameter response surface showing median PR-AUC over \texttt{max\_samples} and \texttt{n\_estimators} across all IForest runs. Colormap is normalized to the observed PR-AUC range (viridis) for visual legibility.}
+\label{fig:results-iforest-surface}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/deepdive_sobol_s1_with_ci.png}
+\caption{Sobol first-order indices for IForest and OCSVM with 95\% bootstrap confidence intervals (resampling across probe datasets). Intervals are wide under the current Saltelli budget, so separation between leading factors should be treated as low-confidence and directional only (indicative, not definitive).}
+\label{fig:results-sobol-ci}
+\end{figure}
+
+\begin{figure*}[!ht]
+\centering
+\includegraphics[width=0.48\textwidth]{../outputs/figures/deepdive_lof_neighbors_metric_heatmap.png}
+\hfill
+\includegraphics[width=0.48\textwidth]{../outputs/figures/deepdive_dbscan_eps_min_samples_heatmap.png}
+
+\vspace{0.4em}
+\includegraphics[width=0.48\textwidth]{../outputs/figures/deepdive_ecod_contamination_line.png}
+\hfill
+\includegraphics[width=0.48\textwidth]{../outputs/figures/deepdive_hbos_bins_alpha_heatmap.png}
+\caption{Per-method sensitivity surfaces for methods not covered by Sobol plots. Top-left: LOF neighbor-count and distance-metric sweep. Top-right: DBSCAN epsilon-multiplier and min-samples sweep. Bottom-left: ECOD contamination-to-label sweep on pima. Bottom-right: HBOS bin-count and smoothing sweep.}
+\label{fig:results-sensitivity-missing-methods}
+\end{figure*}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q2_slope_by_algorithm.png}
+\caption{Dimensional sensitivity summary: slope of median PR-AUC versus \(\log(n_{\text{features}})\) for each algorithm.}
+\label{fig:results-q2-slope}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{../outputs/figures/q2_pr_auc_vs_log_n_rows.png}
+\caption{Robustness versus dataset size: per-dataset median PR-AUC versus \(\log(n_{\text{rows}})\), colored by algorithm.}
+\label{fig:results-q2-size}
+\end{figure}
+
+Figure~\ref{fig:results-param-importance} identifies dominant tuning axes via surrogate-permutation importance (not Sobol), and Fig.~\ref{fig:results-iforest-surface} shows this explicitly for IForest. Fig.~\ref{fig:results-sobol-ci} adds uncertainty bars for the true Sobol analysis (IForest/OCSVM only), while Fig.~\ref{fig:results-sensitivity-missing-methods} provides explicit response plots for LOF, DBSCAN, ECOD, and HBOS along their key tuning axes. For the surrogate-importance bars, no Sobol-style interval is claimed; interpretation is conditioned on surrogate fidelity (\(R^2\): OCSVM \(0.514\), IForest \(0.586\), LOF \(0.213\), DBSCAN \(0.348\), ECOD \(0.053\), HBOS \(0.273\)). Under the \(R^2<0.2\) rule, ECOD surrogate-importance bars are treated as unreliable and are not used for strong parameter-priority conclusions. In practice, this supports a staged strategy: tune high-impact parameters first, then refine secondary controls only when a dataset family shows persistent residual error. Because Sobol runs still use a limited base sample budget, those Sobol magnitudes remain directional rather than definitive despite interval reporting.
+
+\subsection{Verification task summary}
+
+For \texttt{test\_data.csv}, I use a rank-based ensemble over OCSVM, IForest, LOF, DBSCAN, ECOD, and HBOS. Ensemble use is motivated by the complementarity analysis in Section~\ref{sec:results}: global-method overlap is high, but local/global disagreement remains informative. Scores are converted to aligned rank scales and combined through weighted Borda aggregation, following modern outlier-ensemble guidance on rank-based fusion of heterogeneous detector outputs without assuming score-scale comparability \cite{aggarwal2015outlierensembles}. (The Borda rule itself originates from de Borda's historical formulation \cite{borda1781}.)
+
+Preprocessing follows the benchmark policy: numeric features are robust-scaled, with compatibility transforms applied where needed. On \texttt{test\_data.csv}, no preprocessing anomalies were observed (numeric missing fraction \(=0\)); the prepared matrix has \(n=3443\) rows and \(d=22\) features after filtering. Hyperparameters follow the validated defaults from the primary benchmark (IForest: \(n_{\text{estimators}}=200\), \(\texttt{max\_samples}=256\), bootstrap off; LOF: \(k=20\); DBSCAN: knee-based \(\epsilon\) \cite{satopaa2011kneedle}, \(\texttt{min\_samples}=5\); OCSVM: RBF with \(\nu=0.1\); ECOD/HBOS: library defaults). These defaults were selected because they remained stable across the focused sweeps while preserving transferability across heterogeneous datasets.
+
+Because labels are unavailable for \texttt{test\_data.csv}, I report both contamination signals used in the blind protocol: elbow on ensemble ranks gives \(\hat{c}_{elbow}=0.0224\), while the nearest-ODDS structural prior gives \(\hat{c}_{odds}=0.0533\) (profile distance \(0.017<2.0\)); the final threshold uses the ODDS-prior path under this distance criterion. The export step enforces assignment constraints: one \texttt{class} column, binary \(\{0,1\}\) values, and exact row-count parity with input. The resulting file is delivered as \texttt{test\_labels.csv}.
+
+The next section synthesizes these empirical findings into practical guidance and method-level trade-offs.
+
+\section{Discussion}
+\label{sec:discussion}
+
+The benchmark shows no universally best detector. Instead, performance depends on data topology, contamination regime, and geometric structure. Within-family comparisons indicate that IForest is strongest in the engineered/non-PCA-capable group, while DBSCAN remains competitive with LOF in the PCA-95 local group, indicating that local density-connectivity cues are decisive in specific cases.
+
+Method weaknesses are also regime-dependent. LOF and DBSCAN are less transferable across heterogeneous datasets without careful neighborhood calibration, and their failure risk is associated with high-dimensional regimes where distance-concentration ratios compress toward \(1\) or below (Appendix~A CR column; Fig.~\ref{fig:results-q2-dim}). OCSVM is sensitive to boundary-shape and kernel-scale choices. ECOD and HBOS provide efficient and often competitive baselines, but marginal assumptions can miss interaction-driven anomalies. These trade-offs are consistent with the redundancy analysis: some method pairs overlap substantially, but low Kendall alignment for local methods confirms that they still add complementary signal.
+
+From a practical standpoint, detector-specific operating rules are more useful than generic advice. Table~\ref{tab:practical-guidelines} summarizes actionable defaults and first-tuning moves per method under limited domain knowledge.
+
+\begin{table}[!ht]
+\centering
+\caption{Practical detector-specific parameter guidelines for unsupervised deployment.}
+\label{tab:practical-guidelines}
+\small
+\begin{tabularx}{\columnwidth}{p{1cm} p{1.5cm} X}
+\toprule
+\textbf{Method} & \textbf{Start point} & \textbf{First adjustment without labels} \\
+\midrule
+OCSVM & RBF, \(\nu=0.05\) to \(0.10\), \(\gamma=\) ``scale'' & If too many alerts, lower \(\nu\) before changing \(\gamma\); if boundary is too rigid (missed cluster-edge anomalies), increase \(\gamma\) one step. Treat \(\nu\) as model-shape control, not only thresholding. \\
+IForest & \(n_{\text{estimators}}=200\), \(\texttt{max\_samples}=256\) & Increase trees to \(500\) only when rankings are unstable across seeds; tune \(\texttt{max\_samples}\) (128/256/512) before contamination cut. Contamination mainly sets decision threshold. \\
+LOF & \(k=20\), metric=Euclidean on PCA-95 & If outputs are noisy, increase \(k\) (e.g., 20\(\rightarrow\)35); if local anomalies are missed, decrease \(k\) (e.g., 20\(\rightarrow\)10). Avoid raw high-\(d\) spaces when CR is low. \\
+DBSCAN & \(\epsilon=\epsilon_{knee}\), \(\texttt{min\_samples}=5\) on PCA-95 & If almost everything is noise, raise \(\epsilon\) multiplier (\(1.25\times\), \(1.5\times\)); if almost nothing is noise, lower \(\epsilon\) (\(0.8\times\), \(0.6\times\)). Adjust \(\texttt{min\_samples}\) second (3--10). \\
+ECOD & library default scoring, contamination from prior/elbow only for labels & Keep scores fixed and calibrate operating point via contamination prior bands (e.g., 1--5\%, 5--10\%). Prefer as stable global baseline when compute budget is tight. \\
+HBOS & moderate bin count (auto or 15--25), light smoothing & If unstable across runs/datasets, reduce bins; if overly coarse, increase bins gradually. Use as fast coarse filter, then validate with one non-histogram method. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Practical parameter-selection guidance}
+
+Table~\ref{tab:practical-guidelines} is intended as a decision aid, but the practical logic is detector-specific and merits explicit narrative interpretation. For OCSVM, \(\nu\) should be treated as a structural control on boundary tightness rather than a pure post-hoc threshold knob: when false alarms dominate, reducing \(\nu\) is typically the first stabilizing move before changing kernel scale. For Isolation Forest, the main practical sequence is stability-first: increase ensemble size only if rankings are seed-fragile, and adjust \texttt{max\_samples} before threshold calibration. For LOF, neighborhood size \(k\) remains the primary sensitivity lever; larger \(k\) smooths noisy local decisions, while smaller \(k\) can recover finer local anomalies at the cost of variance.
+
+DBSCAN should be tuned through a two-stage geometry-first process: adjust \(\epsilon\) around the knee-derived baseline to enter a plausible noise regime, then refine \texttt{min\_samples} to control cluster persistence. This ordering is more robust than searching both dimensions blindly. For ECOD and HBOS, score generation is comparatively stable and the operational risk is often in thresholding/calibration rather than representation learning. In practice, this means prioritizing contamination-policy sensitivity checks (ECOD) and discretization smoothness checks (HBOS) before attempting deeper model-level changes.
+
+Across methods, a practical deployment pattern emerges: (i) tune one high-impact parameter axis at a time, (ii) monitor whether changes improve ranking consistency across seeds and nearby datasets rather than optimizing a single point estimate, and (iii) treat contamination estimates as operating-point initializers that require stress testing under plausible prevalence shifts. These recommendations align with the observed heterogeneity in Sections~\ref{sec:results} and the method-level sensitivity surfaces in Fig.~\ref{fig:results-sensitivity-missing-methods}.
+
+Overall, the study supports a mixed strategy: robust global baselines for stable coverage, plus targeted local methods to recover geometry-specific anomalies.
 
 \bibliographystyle{plain}
 \bibliography{mybib}
@@ -281,13 +657,13 @@ Robustness summaries accompany the main metrics. They address (i)~how much PR-AU
 
 \section{Dataset Details}
 
-This section provides corpus-level and per-dataset descriptive statistics used in the experimental design and analysis. Each row reflects merged feature--label tables read straight from persisted canonical CSV files, matching the pipeline's raw canonical slice (no robust scaling yet, no arrhythmia engineered matrix, no PCA exports). Missing fraction is total pandas NA cells divided by \(n_{\text{rows}}{\times}n_{\text{cols}}\) for that canonical table (features plus label)---Appendix percentages can disagree with older ``\% incomplete'' aggregates: ODDS-derived \texttt{arrhythmia} emits no CSV-level NaNs and therefore shows \(0.0000\), while handbook figures still cite \(\sim\)0.33\% masked cells historically.
+This appendix reports corpus-level and per-dataset descriptive statistics used in the experimental design. Rows are computed from merged feature--label canonical tables before preprocessing (no robust scaling, no arrhythmia engineered matrix, no PCA exports). Missing fraction is defined as total pandas NA cells divided by \(n_{\text{rows}} \times n_{\text{cols}}\) of each canonical table (features plus label). As a result, appendix values can differ from older ``\% incomplete'' summaries: the ODDS-style \texttt{arrhythmia} table has no CSV-level NaNs (\(0.0000\)), although archival sources still report \(\sim\)0.33\% masked entries.
 
 \subsection{Corpus-Level Summary}
 
 Table~\ref{tab:dataset-summary} summarizes key corpus properties. The 37 datasets range from extremely small ($n=120$) to massive ($n=567{,}498$), and from low-d ($d=2$) to ultra-high-d ($d=400$), ensuring comprehensive coverage of failure modes.
 
-\begin{table}[h]
+\begin{table}[!ht]
 \centering
 \small
 \caption{Corpus-level dataset summary. Statistics reflect raw datasets after canonicalization, before preprocessing.}
@@ -311,53 +687,94 @@ Contamination rate range & 0.0\% -- 35.9\% \\
 
 Table~\ref{tab:dataset-full} provides per-dataset statistics used to characterize solver stress and guide preprocessing decisions. Columns: \texttt{dataset\_id} (name), \texttt{n\_rows}/\texttt{n\_features} (size), \texttt{contam.} (anomaly rate), \texttt{missing} (fraction missing), \texttt{outliers}/\texttt{inliers} (counts), \texttt{mean $|\rho|$} (mean absolute correlation; 0=independent, 1=collinear), \texttt{CR} (distance concentration ratio; $\gg1$=intact geometry, $\lesssim0.1$=curse-of-dimensionality).
 
-\begin{table*}[hp]
-\small
+\begin{table}[!ht]
+\scriptsize
 \centering
-\caption{Per-dataset descriptive statistics.}\label{tab:dataset-full}
-\begin{tabular}{lrrrrrrrr}
+\caption{Per-dataset descriptive statistics. No missing values were present in any dataset. CR stands for distance concentration ratio, $|\rho|$ for mean absolute correlation. Values rounded to 2 decimals.}\label{tab:dataset-full}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrrr}
 \toprule
-\textbf{dataset\_id} & \textbf{n\_rows} & \textbf{n\_features} & \textbf{contam.} & \textbf{missing} & \textbf{outliers} & \textbf{inliers} & \textbf{mean $|\rho|$} & \textbf{CR} \\
+\textbf{dataset\_id} & \textbf{rows} & \textbf{cols} & \textbf{contam.} & \textbf{outliers} & \textbf{inliers} & \textbf{$|\rho|$} & \textbf{CR} \\
 \midrule
-annthyroid & 7200 & 6 & 0.0742 & 0.0000 & 534 & 6666 & 0.2502 & 2.8144 \\
-arrhythmia & 452 & 274 & 0.1460 & 0.0000 & 66 & 386 & 0.0891 & 2.4601 \\
-breastw & 683 & 9 & 0.3499 & 0.0000 & 239 & 444 & 0.6019 & 2.2810 \\
-cardio & 1831 & 21 & 0.0961 & 0.0000 & 176 & 1655 & 0.2206 & 2.9517 \\
-cover & 286048 & 10 & 0.0096 & 0.0000 & 2747 & 283301 & 0.1932 & 2.5192 \\
-glass & 214 & 7 & 0.0421 & 0.0000 & 9 & 205 & 0.2825 & 2.8242 \\
-http & 567498 & 3 & 0.0039 & 0.0000 & 2211 & 565287 & 0.0558 & 4.2144 \\
-ionosphere & 351 & 32 & 0.3590 & 0.0000 & 126 & 225 & 0.2383 & 1.9646 \\
-letter & 1600 & 32 & 0.0625 & 0.0000 & 100 & 1500 & 0.2017 & 1.5442 \\
-lympho & 148 & 18 & 0.0405 & 0.0000 & 6 & 142 & 0.1681 & 2.4614 \\
-mammography & 11183 & 6 & 0.0232 & 0.0000 & 260 & 10923 & 0.2440 & 3.4408 \\
-mnist & 7603 & 100 & 0.0921 & 0.0000 & 700 & 6903 & 0.0761 & 0.9830 \\
-musk & 3062 & 166 & 0.0317 & 0.0000 & 97 & 2965 & 0.2931 & 1.3835 \\
-optdigits & 5216 & 64 & 0.0288 & 0.0000 & 150 & 5066 & 0.1210 & 1.0620 \\
-pendigits & 6870 & 16 & 0.0227 & 0.0000 & 156 & 6714 & 0.2629 & 1.3948 \\
-pima & 768 & 8 & 0.3490 & 0.0000 & 268 & 500 & 0.1717 & 5.7068 \\
-satellite & 6435 & 36 & 0.3164 & 0.0000 & 2036 & 4399 & 0.4958 & 3.0946 \\
-satimage-2 & 5803 & 36 & 0.0122 & 0.0000 & 71 & 5732 & 0.6374 & 3.1626 \\
-shuttle & 49097 & 9 & 0.0715 & 0.0000 & 3511 & 45586 & 0.1787 & 56.1602 \\
-smtp & 95156 & 3 & 0.0003 & 0.0000 & 30 & 95126 & 0.2650 & 3.4001 \\
-speech & 3686 & 400 & 0.0165 & 0.0000 & 61 & 3625 & 0.0270 & 0.5902 \\
-thyroid & 3772 & 6 & 0.0247 & 0.0000 & 93 & 3679 & 0.2624 & 3.0971 \\
-vertebral & 240 & 6 & 0.1250 & 0.0000 & 30 & 210 & 0.3866 & 6.7247 \\
-vowels & 1456 & 12 & 0.0343 & 0.0000 & 50 & 1406 & 0.2742 & 1.7779 \\
-wbc & 223 & 9 & 0.0448 & 0.0000 & 10 & 213 & 0.4194 & 3.9709 \\
-wine & 129 & 13 & 0.0775 & 0.0000 & 10 & 119 & 0.2649 & 5.1625 \\
-wut/smile & 1000 & 2 & 0.0000 & 0.0000 & 0 & 1000 & 0.0062 & 2.6009 \\
-wut/circles & 4000 & 2 & 0.0000 & 0.0000 & 0 & 4000 & 0.0061 & 2.1192 \\
-wut/isolation & 9000 & 2 & 0.0000 & 0.0000 & 0 & 9000 & 0.0073 & 1.9025 \\
-wut/windows & 2977 & 2 & 0.0000 & 0.0000 & 0 & 2977 & 0.0273 & 2.1085 \\
-wut/x2 & 120 & 2 & 0.0833 & 0.0000 & 10 & 110 & 0.5040 & 3.0701 \\
-sipu/compound & 399 & 2 & 0.0000 & 0.0000 & 0 & 399 & 0.3183 & 2.3987 \\
-sipu/jain & 373 & 2 & 0.0000 & 0.0000 & 0 & 373 & 0.4418 & 2.8734 \\
-sipu/flame & 240 & 2 & 0.0500 & 0.0000 & 12 & 228 & 0.0159 & 2.1107 \\
-sipu/spiral & 312 & 2 & 0.0000 & 0.0000 & 0 & 312 & 0.0012 & 2.2402 \\
-fcps/lsun & 400 & 2 & 0.0000 & 0.0000 & 0 & 400 & 0.0984 & 2.3821 \\
-graves/fuzzyx & 1000 & 2 & 0.0000 & 0.0000 & 0 & 1000 & 0.0072 & 2.9222 \\
+annthyroid & 7200 & 6 & 0.07 & 534 & 6666 & 0.25 & 2.81 \\
+arrhythmia & 452 & 274 & 0.15 & 66 & 386 & 0.09 & 2.46 \\
+breastw & 683 & 9 & 0.35 & 239 & 444 & 0.60 & 2.28 \\
+cardio & 1831 & 21 & 0.10 & 176 & 1655 & 0.22 & 2.95 \\
+cover & 286048 & 10 & 0.01 & 2747 & 283301 & 0.19 & 2.52 \\
+glass & 214 & 7 & 0.04 & 9 & 205 & 0.28 & 2.82 \\
+http & 567498 & 3 & 0.00 & 2211 & 565287 & 0.06 & 4.21 \\
+ionosphere & 351 & 32 & 0.36 & 126 & 225 & 0.24 & 1.96 \\
+letter & 1600 & 32 & 0.06 & 100 & 1500 & 0.20 & 1.54 \\
+lympho & 148 & 18 & 0.04 & 6 & 142 & 0.17 & 2.46 \\
+mammography & 11183 & 6 & 0.02 & 260 & 10923 & 0.24 & 3.44 \\
+mnist & 7603 & 100 & 0.09 & 700 & 6903 & 0.08 & 0.98 \\
+musk & 3062 & 166 & 0.03 & 97 & 2965 & 0.29 & 1.38 \\
+optdigits & 5216 & 64 & 0.03 & 150 & 5066 & 0.12 & 1.06 \\
+pendigits & 6870 & 16 & 0.02 & 156 & 6714 & 0.26 & 1.39 \\
+pima & 768 & 8 & 0.35 & 268 & 500 & 0.17 & 5.71 \\
+satellite & 6435 & 36 & 0.32 & 2036 & 4399 & 0.50 & 3.09 \\
+satimage-2 & 5803 & 36 & 0.01 & 71 & 5732 & 0.64 & 3.16 \\
+shuttle & 49097 & 9 & 0.07 & 3511 & 45586 & 0.18 & 56.16 \\
+smtp & 95156 & 3 & 0.00 & 30 & 95126 & 0.27 & 3.40 \\
+speech & 3686 & 400 & 0.02 & 61 & 3625 & 0.03 & 0.59 \\
+thyroid & 3772 & 6 & 0.02 & 93 & 3679 & 0.26 & 3.10 \\
+vertebral & 240 & 6 & 0.13 & 30 & 210 & 0.39 & 6.72 \\
+vowels & 1456 & 12 & 0.03 & 50 & 1406 & 0.27 & 1.78 \\
+wbc & 223 & 9 & 0.04 & 10 & 213 & 0.42 & 3.97 \\
+wine & 129 & 13 & 0.08 & 10 & 119 & 0.26 & 5.16 \\
+wut/smile & 1000 & 2 & 0.00 & 0 & 1000 & 0.01 & 2.60 \\
+wut/circles & 4000 & 2 & 0.00 & 0 & 4000 & 0.01 & 2.12 \\
+wut/isolation & 9000 & 2 & 0.00 & 0 & 9000 & 0.01 & 1.90 \\
+wut/windows & 2977 & 2 & 0.00 & 0 & 2977 & 0.03 & 2.11 \\
+wut/x2 & 120 & 2 & 0.08 & 10 & 110 & 0.50 & 3.07 \\
+sipu/compound & 399 & 2 & 0.00 & 0 & 399 & 0.32 & 2.40 \\
+sipu/jain & 373 & 2 & 0.00 & 0 & 373 & 0.44 & 2.87 \\
+sipu/flame & 240 & 2 & 0.05 & 12 & 228 & 0.02 & 2.11 \\
+sipu/spiral & 312 & 2 & 0.00 & 0 & 312 & 0.00 & 2.24 \\
+fcps/lsun & 400 & 2 & 0.00 & 0 & 400 & 0.10 & 2.38 \\
+graves/fuzzyx & 1000 & 2 & 0.00 & 0 & 1000 & 0.01 & 2.92 \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
+
+\section{ODDS Outlier-Regime Taxonomy}
+
+For tabular local-vs-global analysis in Section~\ref{sec:results}, ODDS datasets are grouped into Campos-style regime labels:
+\begin{description}
+    \item[Global/point-dominant] \texttt{annthyroid}, \texttt{cover}, \texttt{http}, \texttt{mammography}, \texttt{satimage-2}, \texttt{shuttle}, \texttt{smtp}, \texttt{thyroid}.
+    \item[Local/cluster-dominant] \texttt{arrhythmia}, \texttt{breastw}, \texttt{cardio}, \texttt{glass}, \texttt{ionosphere}, \texttt{letter}, \texttt{lympho}, \texttt{mnist}, \texttt{musk}, \texttt{optdigits}, \texttt{pendigits}, \texttt{pima}, \texttt{satellite}, \texttt{speech}, \texttt{vertebral}, \texttt{vowels}, \texttt{wbc}, \texttt{wine}.
+\end{description}
+
+\section{2D Visual Assessment Gallery}
+
+To satisfy broad visual assessment across the selected 2D corpus (11 Gagolewski datasets), this appendix provides all-model score maps for four representative and visually distinct cases: \texttt{wut/x2} (compact global anomalies, Fig.~\ref{fig:appendix-2d-gallery-x2}), \texttt{sipu/compound} (multi-cluster geometry, Fig.~\ref{fig:appendix-2d-gallery-compound}), \texttt{wut/smile} (curved manifold structure, Fig.~\ref{fig:appendix-2d-gallery-smile}), and \texttt{sipu/spiral} (strongly non-convex local topology, Fig.~\ref{fig:appendix-2d-gallery-spiral}). In each map, predicted anomalies are marked with crosses, so method-level false-positive spread and missed-cluster behavior can be inspected directly.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\columnwidth]{../outputs/figures/2d_compare_score_maps__wut__x2.png}
+\caption{Appendix gallery: all-method 2D score-map panel for \texttt{wut/x2} with predicted anomaly markers (crosses).}
+\label{fig:appendix-2d-gallery-x2}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\columnwidth]{../outputs/figures/2d_compare_score_maps__sipu__compound.png}
+\caption{Appendix gallery: all-method 2D score-map panel for \texttt{sipu/compound} with predicted anomaly markers (crosses).}
+\label{fig:appendix-2d-gallery-compound}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\columnwidth]{../outputs/figures/2d_compare_score_maps__wut__smile.png}
+\caption{Appendix gallery: all-method 2D score-map panel for \texttt{wut/smile} with predicted anomaly markers (crosses).}
+\label{fig:appendix-2d-gallery-smile}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\columnwidth]{../outputs/figures/2d_compare_score_maps__sipu__spiral.png}
+\caption{Appendix gallery: all-method 2D score-map panel for \texttt{sipu/spiral} with predicted anomaly markers (crosses).}
+\label{fig:appendix-2d-gallery-spiral}
+\end{figure}
 
 \end{document}

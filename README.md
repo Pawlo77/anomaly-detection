@@ -43,6 +43,7 @@ Uses MLflow (`sqlite:///mlruns.db` by default, artefacts under `./mlruns/`). Aft
 
 - `outputs/phase4_summary.csv` — flattened metrics from finished phase-4 runs (when `phase4` or `all` completes cleanly)
 - `test_labels.csv` — phase-5 blind export (when `phase5` or `all` completes cleanly)
+- `outputs/phase6_elbow_validation.csv` and `outputs/phase6_scores.csv.gz` — phase-6 exports after `make phase6-artifacts`
 
 ```bash
 make experiments
@@ -59,6 +60,12 @@ make experiments EXPERIMENTS_PHASE=oracle EXPERIMENTS_JOBS=4
 
 # Everything defined in the manifest for the selected phase mode
 make experiments EXPERIMENTS_PHASE=all EXPERIMENTS_JOBS=4
+```
+
+Generate phase-6 report artifacts:
+
+```bash
+make phase6-artifacts
 ```
 
 Show all Make targets:
@@ -94,6 +101,17 @@ pdflatex -interaction=nonstopmode report.tex
 ```
 
 Output: `report/report.pdf`.
+
+## Outputs provenance
+
+All CSV outputs under `outputs/` are documented in:
+
+- [`outputs/README.md`](outputs/README.md)
+
+This catalog maps each CSV to either:
+
+- a direct generating command/module, or
+- an explicit extraction/rebuild recipe (for report-derived summary tables).
 
 ## Quality checks (not required for numerical results)
 

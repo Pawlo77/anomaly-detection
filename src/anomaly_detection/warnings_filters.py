@@ -1,4 +1,4 @@
-"""Suppress sklearn warnings that are expected under benchmark loads but clutter logs."""
+"""Suppress expected numerical warnings that clutter benchmark logs."""
 
 import warnings
 
@@ -9,7 +9,7 @@ def apply_known_sklearn_experiment_warnings() -> None:
     Covers: LOF with duplicate coordinates (discrete / subsampled data), Isolation
     Forest when ``max_samples`` exceeds ``n_samples`` (small canonical sets), and
     thresholded metrics when prediction collapses to one class at the natural
-    contamination cut.
+    contamination cut, and ECOD skew warnings on near-constant columns.
     """
     # LOF: identical or duplicate nearest-neighbour ties on thin support.
     warnings.filterwarnings(
@@ -27,5 +27,17 @@ def apply_known_sklearn_experiment_warnings() -> None:
     warnings.filterwarnings(
         "ignore",
         message=r".*A single label was found in 'y_true' and 'y_pred'.*",
+        category=UserWarning,
+    )
+    # ECOD/PyOD: scipy skew moments can lose precision for nearly identical vectors.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*Precision loss occurred in moment calculation due to catastrophic cancellation.*",  # noqa: E501
+        category=RuntimeWarning,
+    )
+    # SALib Saltelli: we intentionally use non-power-of-two N for bounded compute budget.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*Convergence properties of the Sobol' sequence is only valid if.*",
         category=UserWarning,
     )

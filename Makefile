@@ -12,7 +12,7 @@ export OMP_NUM_THREADS=1
 MLFLOW_HOST ?= 127.0.0.1
 MLFLOW_PORT ?= 5005
 MLFLOW_WORKERS ?= 1
-EXPERIMENTS_JOBS ?= 4
+EXPERIMENTS_JOBS ?= 8
 EXPERIMENTS_PHASE ?= all
 # Phase: phase4 (primary ladders), oracle (Track B grids + Sobol + bootstrap only),
 #        phase5 (blind), or all.

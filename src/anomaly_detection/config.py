@@ -363,15 +363,15 @@ class DatasetSettings:
         min_feature_ratio: Minimum acceptable feature ratio for validation.
     """
 
-    root_dir: Path = field(default_factory=Path.cwd)
+    root_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent.parent)
     data_dir: Path = Path("data")
-    raw_dir: Path = Path("data/raw")
-    canonical_dir: Path = Path("data/canonical")
-    processed_dir: Path = Path("data/processed")
-    subsamples_dir: Path = Path("data/processed/subsamples")
-    pca_dir: Path = Path("data/processed/pca")
-    preprocess_reports_dir: Path = Path("outputs/preprocess")
-    stats_dir: Path = Path("outputs")
+    raw_dir: Path = Path("data") / "raw"
+    canonical_dir: Path = Path("data") / "canonical"
+    processed_dir: Path = Path("data") / "processed"
+    subsamples_dir: Path = Path("data") / "processed" / "subsamples"
+    pca_dir: Path = Path("data") / "processed" / "pca"
+    preprocess_reports_dir: Path = Path("outputs") / "preprocess"
+    stats_dir: Path = Path("outputs") / "stats"
     random_seeds: tuple[int, ...] = DEFAULT_DATASET_SEEDS
     n2_algorithm_caps: dict[str, int] = field(
         default_factory=lambda: dict(DEFAULT_DATASET_ALGORITHM_CAPS)

@@ -252,7 +252,12 @@ def _stage_descriptive_stats(settings: DatasetSettings, catalog: DatasetCatalog)
 def _stage_validate(settings: DatasetSettings, catalog: DatasetCatalog) -> None:
     """Validate canonical artifacts and emit quality report."""
     rows, failures = validate_canonical_artifacts(settings=settings, catalog=catalog)
+    # Keep both paths for backward compatibility: legacy consumers read
+    # outputs/validation_report.csv, while newer reporting uses outputs/stats/.
     write_validation_report(rows, settings.resolve(settings.stats_dir / "validation_report.csv"))
+    write_validation_report(
+        rows, settings.resolve(settings.data_dir.parent / "outputs/validation_report.csv")
+    )
     if failures and settings.strict_validate:
         raise ValueError(f"Validation failed for datasets: {', '.join(failures)}")
 

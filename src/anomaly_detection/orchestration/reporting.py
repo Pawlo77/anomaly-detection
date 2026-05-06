@@ -7,7 +7,7 @@ from mlflow.tracking import MlflowClient
 
 from ..config import MlflowSettings
 
-PHASE4_SUMMARY_FILENAME = "phase4_summary.csv"
+PHASE4_SUMMARY_FILENAME = "outputs/phase4_summary.csv"
 """Default CSV filename for aggregated phase-4 metrics."""
 
 
@@ -57,5 +57,6 @@ def export_phase4_summary(settings: MlflowSettings, output_path: Path | None = N
         return None
     table = pd.DataFrame(rows)
     target = output_path or Path(PHASE4_SUMMARY_FILENAME)
+    target.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(target, index=False)
     return target

@@ -41,7 +41,7 @@ The Makefile defaults to **`EXPERIMENTS_PHASE=all`**, which schedules every mani
 
 Uses MLflow (`sqlite:///mlruns.db` by default, artefacts under `./mlruns/`). After successful runs, the CLI exports aggregates where applicable:
 
-- `phase4_summary.csv` — flattened metrics from finished phase-4 runs (when `phase4` or `all` completes cleanly)
+- `outputs/phase4_summary.csv` — flattened metrics from finished phase-4 runs (when `phase4` or `all` completes cleanly)
 - `test_labels.csv` — phase-5 blind export (when `phase5` or `all` completes cleanly)
 
 ```bash

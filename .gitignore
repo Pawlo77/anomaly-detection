@@ -1,5 +1,6 @@
 data/*
 !data/test_data.csv
+!data/test_labels.csv
 
 .ai/
 mlruns/
